@@ -1,0 +1,3 @@
+newmtl mate
+Kd 1 1 1
+map_Kd mate_tex.png

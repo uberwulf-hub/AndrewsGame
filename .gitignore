@@ -1,0 +1,10 @@
+.godot/
+*.tmp
+
+# Build output
+build/
+
+# Private: source photos of family members, and comparison renders
+reference/
+face_compare.png
+face_compare.png.import
