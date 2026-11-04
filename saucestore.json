@@ -4,6 +4,7 @@
   "description": "A Whispering Woods Adventure. A third-person adventure through the woods with a fox companion: explore, gather, fight and find your way home. Early prototype.",
   "icon": "store/icon.png",
   "assets": { "windows": "FindingHome-windows.zip" },
+  "requirements": ["Windows 10 or 11 (64-bit)", "Graphics card with Vulkan or DirectX 12 support"],
   "rightsConfirmed": true,
   "credits": [
     { "asset": "Fox model (models/fox)", "author": "PixelMannen (model); tomkranis (rigging and animation); @AsoboStudio and @scurest (glTF conversion)", "license": "CC0 1.0 (model); CC BY 4.0 (rigging, animation, conversion)", "source": "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Fox" },
