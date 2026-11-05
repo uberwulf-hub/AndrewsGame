@@ -295,7 +295,7 @@ func _fire_hint() -> void:
 	_otter.say(["Brrr... I'm SO cold. Can we make a fire? Pleeease?"])
 	get_tree().create_timer(3.6).timeout.connect(func():
 		_fox.say(["Somebody camped here before us. See that old fire ring?", "Over here. Come look. Maybe you'll learn something. For once."])
-		if _fire_ring:
+		if is_instance_valid(_fire_ring):
 			_fox.show_spot(_fire_ring.global_position)
 		Game.start_quest("fire", "A Fire in the Dark", ["Look at the old fire ring", "Gather sticks", "Gather stones", "Build a campfire (Tab → Know-how)"], true, "Otter")
 		_update_fire_goal()
@@ -1902,6 +1902,12 @@ func _take_screenshot() -> void:
 		pl.zoom = 0.0
 		await get_tree().create_timer(1.5).timeout
 		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_ring.png"))
+		# Building a campfire right on it: the old ring makes way.
+		var fire := Campfire.build(self, ring)
+		await get_tree().create_timer(1.0).timeout
+		print("old ring still there after building on it: %s" % is_instance_valid(_fire_ring))
+		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_ring_built.png"))
+		fire.queue_free()
 		# Then the pets settling down while he stands still, and pointing the
 		# dot at things.
 		var snap := func(tag: String):

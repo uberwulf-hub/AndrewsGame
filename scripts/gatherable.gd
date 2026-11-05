@@ -172,45 +172,37 @@ func _build(rng: RandomNumberGenerator) -> void:
 				var s := MeshKit.part(_visual, MeshKit.sphere(0.04, 0.05, 6, 4), shell, Vector3(rng.randf_range(-0.1, 0.1), 0.03, rng.randf_range(-0.1, 0.1)))
 				s.scale = Vector3(1.0, 0.6, 1.8 if kind == "crayfish" else 1.2)
 		"fire_ring":
-			# Long cold: a scorched patch, a full ring of big pale stones, charred
-			# sticks and a smudge of ash, so it reads at a glance.
-			var scorch := MeshKit.mat(Color(0.08, 0.07, 0.06), 1.0)
-			var char_wood := MeshKit.mat(Color(0.09, 0.07, 0.06), 1.0)
-			var ash := MeshKit.mat(Color(0.5, 0.49, 0.47), 1.0)
-			var stone := _readable(Color(0.66, 0.63, 0.58))
-			MeshKit.part(_visual, MeshKit.cyl(1.05, 1.1, 0.012, 16), scorch, Vector3(0, 0.006, 0))
-			MeshKit.part(_visual, MeshKit.cyl(0.45, 0.5, 0.02, 12), ash, Vector3(0, 0.014, 0))
-			for k in 11:
-				var a := TAU * k / 11.0 + rng.randf_range(-0.08, 0.08)
-				var s := MeshKit.part(_visual, MeshKit.sphere(0.17, 0.19, 7, 5), stone, Vector3(cos(a), 0, sin(a)) * 0.78 + Vector3(0, 0.07, 0))
-				s.scale = Vector3(rng.randf_range(0.9, 1.25), rng.randf_range(0.65, 0.85), rng.randf_range(0.9, 1.15))
+			# Long cold, and the same size as the campfire you'll build (stones at
+			# half a metre): a faded scorch, only some of the stones left, sunk and
+			# weathered, one knocked out of place, and the wood burned down to
+			# black stubs and pale ash. Nothing glows any more.
+			var scorch := MeshKit.mat(Color(0.12, 0.11, 0.1), 1.0)
+			var char_wood := MeshKit.mat(Color(0.08, 0.07, 0.06), 1.0)
+			var ash := MeshKit.mat(Color(0.55, 0.54, 0.52), 1.0)
+			var stones := [_readable(Color(0.6, 0.58, 0.54)), _readable(Color(0.52, 0.5, 0.46)), _readable(Color(0.46, 0.5, 0.4))]  # the last one mossy
+			MeshKit.part(_visual, MeshKit.cyl(0.72, 0.78, 0.012, 14), scorch, Vector3(0, 0.006, 0)).scale = Vector3(1.0, 1.0, 0.85)
+			MeshKit.part(_visual, MeshKit.cyl(0.3, 0.34, 0.02, 10), ash, Vector3(0.04, 0.014, -0.02))
+			# Nine places in the ring, like the campfire's; three in a row are gone.
+			for k in 9:
+				if k == 2 or k == 3 or k == 4:
+					continue
+				var a := TAU * k / 9.0 + rng.randf_range(-0.12, 0.12)
+				var r := 0.5 + rng.randf_range(-0.04, 0.06)
+				var size := rng.randf_range(0.11, 0.16)  # worn down, some cracked smaller
+				var s := MeshKit.part(_visual, MeshKit.sphere(size, size * 1.1, 7, 4), stones[k % 3], Vector3(cos(a) * r, size * 0.15, sin(a) * r))
+				s.scale = Vector3(rng.randf_range(0.9, 1.3), rng.randf_range(0.6, 0.85), rng.randf_range(0.9, 1.3))
+				s.rotation.y = rng.randf() * TAU
+			# The one that got knocked out, lying a step away.
+			var stray := MeshKit.part(_visual, MeshKit.sphere(0.13, 0.15, 7, 4), stones[0], Vector3(cos(TAU * 3.0 / 9.0), 0.02, sin(TAU * 3.0 / 9.0)) * 0.95)
+			stray.scale = Vector3(1.2, 0.7, 1.0)
+			# Burned-down wood: short black stubs fallen in, one longer log end
+			# that never quite caught.
 			for k in 4:
-				var stick := MeshKit.part(_visual, MeshKit.cyl(0.03, 0.04, rng.randf_range(0.5, 0.7), 5), char_wood, Vector3(rng.randf_range(-0.12, 0.12), 0.06, rng.randf_range(-0.12, 0.12)))
-				stick.rotation = Vector3(PI / 2 - 0.25, TAU * k / 4.0 + rng.randf_range(-0.3, 0.3), 0)
-			# A few coals still glowing under the ash, and a thread of smoke, so it
-			# catches the eye in the dark.
-			for k in 6:
-				MeshKit.part(_visual, MeshKit.sphere(0.04, 0.05, 5, 3), MeshKit.glow(Color(1.0, 0.35, 0.08), 3.5), Vector3(rng.randf_range(-0.2, 0.2), 0.03, rng.randf_range(-0.2, 0.2)))
-			var glow := OmniLight3D.new()
-			glow.light_color = Color(1.0, 0.45, 0.15)
-			glow.light_energy = 1.3
-			glow.omni_range = 3.8
-			glow.position = Vector3(0, 0.25, 0)
-			_visual.add_child(glow)
-			var smoke := CPUParticles3D.new()
-			var puff := MeshKit.sphere(0.06, -1.0, 5, 3)
-			var smoke_mat := MeshKit.mat(Color(0.6, 0.6, 0.62, 0.35))
-			smoke_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			puff.material = smoke_mat
-			smoke.mesh = puff
-			smoke.amount = 10
-			smoke.lifetime = 3.0
-			smoke.direction = Vector3.UP
-			smoke.spread = 8.0
-			smoke.initial_velocity_min = 0.3
-			smoke.initial_velocity_max = 0.5
-			smoke.position = Vector3(0, 0.1, 0)
-			_visual.add_child(smoke)
+				var stub := MeshKit.part(_visual, MeshKit.cyl(0.035, 0.045, rng.randf_range(0.18, 0.3), 5), char_wood,
+					Vector3(rng.randf_range(-0.15, 0.15), 0.035, rng.randf_range(-0.15, 0.15)))
+				stub.rotation = Vector3(PI / 2, rng.randf() * TAU, 0)
+			var log_end := MeshKit.part(_visual, MeshKit.cyl(0.05, 0.055, 0.42, 6), char_wood, Vector3(0.18, 0.05, 0.12), Vector3(PI / 2, 0.7, 0))
+			log_end.scale = Vector3(1.0, 1.0, 0.9)
 		"berries":
 			var leaf := MeshKit.mat(Color(0.16, 0.34, 0.14), 0.9)
 			for k in 4:

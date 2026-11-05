@@ -40,6 +40,10 @@ static func _shape(parent: Node3D, stone: Material, wood: Material) -> void:
 func _ready() -> void:
 	add_to_group("campfires")
 	add_to_group("usables")
+	# Built over the old fire ring, the new fire takes its place.
+	for g in get_tree().get_nodes_in_group("gatherables"):
+		if (g as Gatherable).kind == "fire_ring" and (g as Node3D).global_position.distance_to(global_position) < 1.6:
+			g.queue_free()
 	_shape(self, MeshKit.mat(Color(0.42, 0.4, 0.38), 0.9), MeshKit.mat(Color(0.3, 0.2, 0.12)))
 	var flame := CPUParticles3D.new()
 	var flame_mesh := MeshKit.sphere(0.1, 0.26, 6, 3)
