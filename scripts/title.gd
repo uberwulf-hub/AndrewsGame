@@ -4,6 +4,7 @@ extends Node3D
 ## Load Game / Quit. Play fades out into the dream.
 
 const NEXT_SCENE := "res://scenes/dream.tscn"
+const GAME_SCENE := "res://scenes/main.tscn"
 const CREAM := Color(0.97, 0.9, 0.74)
 const WOOD := Color(0.42, 0.26, 0.15)
 const WOOD_DARK := Color(0.24, 0.14, 0.08)
@@ -265,7 +266,7 @@ func _build_ui() -> void:
 		b.pressed.connect(row[i][1])
 		root.add_child(b)
 		if row[i][0] == "LOAD GAME":
-			b.tooltip_text = "No saved games yet"
+			b.tooltip_text = ("Saved " + SaveGame.saved_when()) if SaveGame.exists() else "No saved games yet"
 	play.grab_focus()
 
 	_options = _build_options()
@@ -353,7 +354,17 @@ func _on_help() -> void:
 
 
 func _on_load() -> void:
-	Audio.play("dry_fire", null, -10.0, 1.4)
+	var data := SaveGame.read()
+	if data.is_empty() or _leaving:
+		Audio.play("dry_fire", null, -10.0, 1.4)
+		return
+	_leaving = true
+	SaveGame.pending = data
+	Game.story_start = true
+	Audio.play("ui_notify", null, -6.0, 0.8)
+	var tw := create_tween()
+	tw.tween_property(_fade, "color:a", 1.0, 1.2)
+	tw.tween_callback(func(): get_tree().change_scene_to_file(GAME_SCENE))
 
 
 func _text(s: String, font: Font, size: int, color: Color) -> Label:

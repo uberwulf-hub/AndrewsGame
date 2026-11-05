@@ -20,6 +20,10 @@ var _gold_rune_mat: StandardMaterial3D
 var _fire_mat: StandardMaterial3D
 var _env: Environment
 var _air_fog: Array = []
+var _sun: DirectionalLight3D
+var _sky_material: ProceduralSkyMaterial
+var _moon: MeshInstance3D
+var _stars: Node3D
 var _underwater_blend := 0.0
 
 
@@ -27,6 +31,7 @@ func _ready() -> void:
 	_rng.seed = 20261101
 	if Game.story_start:
 		Game.wake_point = _find_wake_point()
+		_ring_spot = _fire_ring_spot(Game.wake_point)
 	_make_materials()
 	_build_environment()
 	_build_terrain()
@@ -62,6 +67,18 @@ func _ready() -> void:
 	var hud := Hud.new()
 	add_child(hud)
 	hud.bind(player)
+	_hud = hud
+	if Game.story_start:
+		# Where he's been, for the map: nowhere yet in a new life, or as saved.
+		Game.explored = SaveGame.pending.get("explored", PackedByteArray())
+		hud.set_map_base(_map_image())
+	player.passed_out.connect(_on_passed_out)
+	_birds = Birds.new()
+	_birds.name = "Birds"
+	add_child(_birds)
+	_animals = Animals.new()
+	_animals.name = "Animals"
+	add_child(_animals)
 	var pause := PauseMenu.new()
 	add_child(pause)
 	if Game.shot_help:
@@ -69,10 +86,13 @@ func _ready() -> void:
 			pause.open()
 			pause._menu.visible = false
 			pause._help.visible = true)
-	if Game.story_start:
+	if Game.story_start and not SaveGame.pending.is_empty():
+		_resume(player, hud, SaveGame.pending)
+		SaveGame.pending = {}
+	elif Game.story_start:
 		_start_wake(player, hud, facing)
 	else:
-		Game.notify("Welcome to the Sanctum. Pick a weapon, then head out.", Color(0.6, 0.95, 1.0))
+		Game.notify("Welcome to the Sanctum. Take a dream tool, then head out.", Color(0.6, 0.95, 1.0))
 
 	if Game.shot_demo and Game.ENEMIES_ENABLED:
 		_spawn_demo_enemies(player)
@@ -108,11 +128,18 @@ func _find_wake_point() -> Vector3:
 	return best
 
 
+var _birds: Birds
+var _animals: Animals
 var _fox: Companion
 var _otter: Companion
 var _fire_built := false
 var _hud: Hud
 var _food_at_start := 0
+var _cooking_hinted := false
+var _night_passed := false
+var _settled := false  # food, idea and roof all done
+var _fire_ring: Gatherable
+var _ring_spot := Vector3(INF, 0, INF)
 
 
 func _start_wake(player: Player, hud: Hud, facing: float) -> void:
@@ -123,8 +150,12 @@ func _start_wake(player: Player, hud: Hud, facing: float) -> void:
 	Game.ideas.clear()
 	Game.food_found = 0
 	Game.known.clear()
+	Game.sparks.clear()
+	Game.sparks_open = false  # the Otter's ideas wait until morning
+	Game._held_sparks.clear()
+	Game.rest_ready = false
 	_hud = hud
-	Game.learned.connect(_on_learned)
+	_connect_story()
 	Game.hunger = 100.0
 	Game.thirst = 100.0
 	Game.warmth = 70.0  # a cold night on the forest floor
@@ -146,10 +177,106 @@ func _start_wake(player: Player, hud: Hud, facing: float) -> void:
 		], 3.6, func():
 			_fox.wake(0.4, "Finally. You snore like a bear with a cold, you know.")
 			_otter.wake(3.6, "Huh? Where ARE we? ...Whoa, it's so dark. And cold!")
-			get_tree().create_timer(8.0).timeout.connect(func():
-				Game.notify("You check your backpack: a pocketknife, flint, a canteen, your dream journal... and a marble that hums.", Color(0.85, 0.9, 1.0))
-				_fire_hint()))
+			# One thing at a time: a beat to look around, the backpack, then the plan.
+			get_tree().create_timer(9.0).timeout.connect(func():
+				Game.notify("You check your backpack: a pocketknife, flint, a canteen, your dream journal... and a marble that hums.", Color(0.85, 0.9, 1.0)))
+			get_tree().create_timer(16.0).timeout.connect(_fire_hint))
 	, CONNECT_ONE_SHOT)
+
+
+func _connect_story() -> void:
+	Game.learned.connect(_on_learned)
+	Game.sparked.connect(_on_sparked)
+	Game.rest_requested.connect(_pass_the_night)
+
+
+# --- Saving and loading ------------------------------------------------------
+
+## Whether now's a good moment to save: not mid-scene, not underwater.
+func can_save() -> bool:
+	var p := Game.player
+	return Game.story_start and p != null and p.alive and not p.frozen and not p.knocked_out \
+		and not Game.underwater and _fox != null
+
+
+func save_game() -> bool:
+	if not can_save():
+		return false
+	return SaveGame.write(get_tree(), {
+		"fire_built": _fire_built,
+		"settled": _settled,
+		"night_passed": _night_passed,
+		"sanctum_found": _sanctum_found,
+		"food_at_start": _food_at_start,
+		"cooking_hinted": _cooking_hinted,
+		"fox": [_fox._tips_given, _fox._feelings],
+		"otter": [_otter._tips_given, _otter._feelings],
+	})
+
+
+
+## A new morning saves the game by itself (waiting a bit if he's busy, say
+## swimming, and giving up after a minute).
+func _autosave(tries := 12) -> void:
+	if save_game():
+		Game.notify("Game saved.", Color(0.8, 0.9, 1.0))
+	elif tries > 0:
+		get_tree().create_timer(5.0).timeout.connect(_autosave.bind(tries - 1))
+
+
+## Picks up a saved game: the hero where he was, both pets awake beside him,
+## everything built, and the story carried on from the same place (any beat
+## that was still on its way when you saved starts again here).
+func _resume(player: Player, hud: Hud, data: Dictionary) -> void:
+	_hud = hud
+	_connect_story()
+	SaveGame.restore_game(data)
+	SaveGame.restore_player(data, player)
+	SaveGame.restore_built(data, self)
+	if not data.game.is_night:
+		_make_dawn()
+	var s: Dictionary = data.story
+	_fire_built = s.fire_built
+	_settled = s.settled
+	_night_passed = s.night_passed
+	_sanctum_found = s.sanctum_found
+	_food_at_start = s.food_at_start
+	_cooking_hinted = s.cooking_hinted
+	var right := Basis(Vector3.UP, player._yaw) * Vector3.RIGHT
+	_fox = Companion.create(self, Critter.fox(), "fox", player.global_position + right * 1.6, hud)
+	_otter = Companion.create(self, Critter.otter(), "otter", player.global_position - right * 1.4, hud)
+	for pair in [[_fox, s.fox], [_otter, s.otter]]:
+		var c: Companion = pair[0]
+		if c._zzz:
+			c._zzz.queue_free()
+		c.body.rotation.z = 0.0
+		c._tips_given = pair[1][0]
+		c._feelings = pair[1][1]
+		c.follow()
+	hud.fade_in(Color.BLACK, 2.0)
+	Game.notify("Welcome back.", Color(1.0, 0.9, 0.7))
+	var later := func(t: float, f: Callable): get_tree().create_timer(t).timeout.connect(f)
+	if not _fire_built:
+		if Game.quest("fire").is_empty():
+			later.call(4.0, _fire_hint)
+		else:
+			_update_fire_goal()
+			Game.inventory_changed.connect(_update_fire_goal)
+	elif not _settled and Game.quest("settle").is_empty():
+		Game.start_quest("settle", "Settle In for the Night", ["Gather some food  0/3", "Ask the Otter how to stay safe (walk up, press E)", "Build a lean-to (Tab → Know-how)"], true, "Fox")
+		_food_at_start = Game.food_found
+	elif _settled and not _night_passed and Game.quest("night").is_empty():
+		Game.start_quest("night", "The Long Night", ["Sit by the fire with the Fox and the Otter (E at the fire)"], true, "Fox")
+		Game.rest_ready = true
+	if _night_passed and not Game.known.has("map"):
+		later.call(15.0, _suggest_map)
+	elif Game.known.has("map") and not Game.has_map() and Game.quest("map").is_empty():
+		_start_map_quest()
+	if _night_passed:
+		if not _sanctum_found and Game.quest("hum").is_empty() and Game.quest("sanctum").is_empty():
+			later.call(5.0, func(): Game.start_quest("hum", "The Humming Marble", ["Follow the hum (it chimes when you face the right way)"], true, "Fox"))
+		if not Game.sparks_open:
+			later.call(30.0, Game.open_sparks)
 
 
 ## The pets come up with the first plan: the Otter is cold, the Fox spots
@@ -157,7 +284,9 @@ func _start_wake(player: Player, hud: Hud, facing: float) -> void:
 func _fire_hint() -> void:
 	_otter.say(["Brrr... I'm SO cold. Can we make a fire? Pleeease?"])
 	get_tree().create_timer(3.6).timeout.connect(func():
-		_fox.say(["Somebody camped here before us. See that old fire ring?", "Go look. Maybe you'll learn something. For once."])
+		_fox.say(["Somebody camped here before us. See that old fire ring?", "Over here. Come look. Maybe you'll learn something. For once."])
+		if _fire_ring:
+			_fox.show_spot(_fire_ring.global_position)
 		Game.start_quest("fire", "A Fire in the Dark", ["Look at the old fire ring", "Gather sticks", "Gather stones", "Build a campfire (Tab → Know-how)"], true, "Otter")
 		_update_fire_goal()
 		Game.inventory_changed.connect(_update_fire_goal))
@@ -210,10 +339,176 @@ func _update_settle() -> void:
 	Game.set_step("settle", 2, "Build a lean-to (Tab → Know-how)", built)
 	if food >= 3 and built:
 		Game.complete_quest("settle")
+		_settled = true
 		_otter.say(["Ta-da! Our first house!", "...Okay, it's a house for ants. But it's OURS."])
+		# Nobody's sleepy (they just woke up), so they sit up by the fire instead.
 		get_tree().create_timer(8.0).timeout.connect(func():
-			_fox.say(["Hey. That marble of yours won't stop humming.", "It gets louder when you face a certain way. Just saying."])
-			Game.start_quest("hum", "The Humming Marble", ["Warm up by the fire", "Follow the hum (it chimes when you face the right way)"], true, "Fox"))
+			_otter.say(["I'm not sleepy. Like, at ALL."])
+			get_tree().create_timer(3.4).timeout.connect(func():
+				_fox.say(["Same. Let's just sit by the fire for a while.", "Watch the stars. Be lazy. My favorite."])
+				Game.start_quest("night", "The Long Night", ["Sit by the fire with the Fox and the Otter (E at the fire)"], true, "Fox")
+				Game.rest_ready = true))
+
+
+## The Fox notices you're about to eat something raw with a fire right there.
+func _update_cooking_hint() -> void:
+	if _cooking_hinted or not _fire_built or Game.known.has("cooking"):
+		return
+	for raw in Game.COOKS:
+		if Game.has_items(raw):
+			_cooking_hinted = true
+			get_tree().create_timer(2.5).timeout.connect(func():
+				_fox.say(["Wait. You're gonna eat that RAW?", "We have a FIRE. Hold it over the fire. Walk up and press E.", "Honestly. What would you do without me."])
+				get_tree().create_timer(9.0).timeout.connect(func():
+					Game.learn("cooking", ["Cook it first. Of course.", "That fox is smarter than he lets on."], "Fox")))
+			return
+
+
+## Found something the Otter can turn into an idea: the hero thinks it over,
+## then the Otter wants to see.
+func _on_sparked(_id: String, thought: Array) -> void:
+	_hud.think(thought, 3.2)
+	get_tree().create_timer(6.8).timeout.connect(func():
+		_otter.say(["Ooh! What's that? Show me, show me!", "(Walk up to me and press E.)"]))
+
+
+## Sitting by the fire with the boys until morning: they get comfy, talk a
+## little, the screen fades, and the sky's pink when it comes back.
+func _pass_the_night() -> void:
+	if _night_passed:
+		return
+	var fire: Node3D = null
+	for f in get_tree().get_nodes_in_group("campfires"):
+		if fire == null or (f as Node3D).global_position.distance_to(Game.player.global_position) < fire.global_position.distance_to(Game.player.global_position):
+			fire = f
+	if fire == null:
+		return
+	_night_passed = true
+	Game.rest_ready = false
+	var p := Game.player
+	var center := fire.global_position
+	var away := p.global_position - center
+	away.y = 0.0
+	away = away.normalized() if away.length() > 0.1 else Vector3.BACK
+	p.seated = false  # the night passes before anyone gets up
+	var seat := center + away * 1.8
+	p.global_position = Vector3(seat.x, Game.ground_at(seat.x, seat.z), seat.z)
+	p.sit_facing(center)
+	_fox.rest_at(center + away.rotated(Vector3.UP, 1.4) * 1.5, center)
+	_otter.rest_at(center + away.rotated(Vector3.UP, -1.4) * 1.4, center)
+	var talk := [
+		[_otter, "Do you think the stars can see us?"],
+		[_fox, "Only the nosy ones."],
+		[_otter, "...I'm glad we're all together."],
+		[_fox, "Yeah. Me too.", "Don't make it weird."],
+	]
+	var t := 1.0
+	for line in talk:
+		var who: Companion = line[0]
+		var words: Array = line.slice(1)
+		get_tree().create_timer(t).timeout.connect(func(): who.say(words))
+		t += 3.6 * words.size()
+	get_tree().create_timer(t).timeout.connect(func():
+		_hud.think(["Me too. Both of you."], 3.4))
+	get_tree().create_timer(t + 4.0).timeout.connect(func():
+		_hud.fade_through(Color.BLACK, 3.0, 2.5, 3.5, func():
+			_make_dawn()
+			Game.warmth = 100.0
+			Game.hunger = maxf(30.0, Game.hunger - 20.0)
+			Game.thirst = maxf(30.0, Game.thirst - 20.0)
+			Game.notify("The night passes by the fire.", Color(1.0, 0.85, 0.7)))
+		get_tree().create_timer(10.0).timeout.connect(_morning))
+
+
+## Out of air: he floats up limp, the Otter shoots out to him with the Fox
+## paddling after, they tow him in by the arms, the screen fades as one of
+## them scolds him, and he comes to on the bank with them fussing over him.
+func _on_passed_out() -> void:
+	var p := Game.player
+	var shore := _nearest_shore(p.global_position)
+	var pull := shore - p.global_position
+	pull.y = 0.0
+	pull = pull.normalized() if pull.length() > 0.1 else Vector3.FORWARD
+	var side := pull.cross(Vector3.UP)
+	var pets := [_otter, _fox].filter(func(c): return c != null)
+	var later := func(t: float, f: Callable): get_tree().create_timer(t).timeout.connect(f)
+	if _otter:
+		later.call(0.8, func():
+			_otter.say(["Uh oh. He's not swimming. He's NOT swimming!"])
+			_otter.rescue(-side * 0.75 + pull * 0.45, pull))
+	if _fox:
+		later.call(2.2, func():
+			_fox.say(["Hang on! I got this arm! You get that one!"])
+			_fox.rescue(side * 0.8 + pull * 0.45, pull))
+	later.call(4.5, func(): p.tow = pull * 1.6)
+	later.call(6.5, func():
+		if _otter:
+			_otter.say(["You can't hold your breath THAT long, silly! You're not an otter!"])
+		_hud.fade_through(Color.BLACK, 3.5, 2.0, 3.0, func():
+			# Up on the bank: him lying there, the two of them dripping beside him.
+			var spot := shore + pull * 1.2
+			spot.y = Game.ground_at(spot.x, spot.z) + 0.05
+			p.wake_on_shore(spot, atan2(-pull.x, -pull.z))
+			p.health = maxf(25.0, p.health - 10.0)
+			Game.warmth = maxf(0.0, Game.warmth - 20.0)
+			var head := spot - pull * 0.2
+			if _otter:
+				_otter.rest_at(head - side * 0.9 + pull * 0.9, head)
+			if _fox:
+				_fox.rest_at(head + side * 1.0 + pull * 0.9, head)
+			for c in pets:
+				c.wet = 1.0
+				c.in_water = false
+				c.body.swimming = false))
+	# The screen comes back (6.5 + 3.5 + 2.0 + 3.0 s): he blinks, gets up, they fuss.
+	later.call(15.0, func():
+		p.begin_wake(atan2(-pull.x, -pull.z))
+		if _otter:
+			_otter.say(["You're awake! You're AWAKE! You scared me SO bad!"]))
+	later.call(18.6, func():
+		if _fox:
+			_fox.say(["Rule two of the wild: keep breathing.", "Air goes in. Air goes out. It's a whole thing."]))
+	later.call(19.5, func():
+		for c in pets:
+			c.shake(false))
+	later.call(25.8, func():
+		_hud.think(["Note to self... I am not a fish."], 3.0)
+		for c in pets:
+			c.follow())
+	later.call(29.0, func():
+		Game.notify("Watch your air when you dive. Come up for a breath with Space.", Color(0.6, 0.85, 1.0)))
+
+
+## The closest dry ground to `from`, searching outward in rings.
+func _nearest_shore(from: Vector3) -> Vector3:
+	for r in range(2, 80, 2):
+		var best := Vector3.INF
+		for k in 24:
+			var a := TAU * k / 24.0
+			var q := from + Vector3(cos(a), 0.0, sin(a)) * r
+			if Game.ground_at(q.x, q.z) > Game.WATER_LEVEL + 0.15:
+				best = q
+				break
+		if best != Vector3.INF:
+			return Vector3(best.x, Game.ground_at(best.x, best.z), best.z)
+	return Game.player.spawn_point
+
+
+func _morning() -> void:
+	Game.complete_quest("night")
+	_otter.say(["Look! The sky's all pink!"])
+	get_tree().create_timer(3.4).timeout.connect(func():
+		_fox.say(["Morning already? I wasn't asleep.", "I was resting my eyes. Loudly."]))
+	get_tree().create_timer(5.0).timeout.connect(func():
+		Game.player.stand_up()
+		_fox.follow()
+		_otter.follow())
+	get_tree().create_timer(12.0).timeout.connect(func():
+		_fox.say(["Hey. That marble of yours won't stop humming.", "It gets louder when you face a certain way. Just saying."])
+		Game.start_quest("hum", "The Humming Marble", ["Follow the hum (it chimes when you face the right way)"], true, "Fox"))
+	get_tree().create_timer(40.0).timeout.connect(Game.open_sparks)
+	get_tree().create_timer(26.0).timeout.connect(_suggest_map)
+	get_tree().create_timer(14.0).timeout.connect(_autosave)
 
 
 ## After the fire, the marble chimes when you face the Sanctum, louder as you
@@ -225,15 +520,15 @@ func _update_story(delta: float) -> void:
 	if not _fire_built and not get_tree().get_nodes_in_group("campfires").is_empty():
 		_on_fire_built()
 	_update_settle()
-	if not Game.quest("hum").is_empty() and Game.warmth > 90.0:
-		Game.set_step("hum", 0, "Warm up by the fire", true)
+	_update_cooking_hint()
+	_update_map_goal()
 	var dist := Vector2(p.global_position.x, p.global_position.z).length()
 	if not _sanctum_found:
 		if dist < 22.0 and not Game.quest("hum").is_empty():
 			_sanctum_found = true
 			Game.notify("The Sanctum... somehow, you've been here before.", Color(0.6, 0.95, 1.0))
 			Game.complete_quest("hum")
-			Game.start_quest("sanctum", "The Sanctum", ["Take a weapon from the altar"])
+			Game.start_quest("sanctum", "The Sanctum", ["See what rests on the old stone"])
 			return
 		_hum_timer -= delta
 		if _hum_timer <= 0.0 and not Game.quest("hum").is_empty():
@@ -251,14 +546,90 @@ func _update_story(delta: float) -> void:
 
 func _process(delta: float) -> void:
 	if _crystal:
-		_crystal.rotate_y(delta * 0.6)
-		_crystal.position.y = 4.4 + sin(Time.get_ticks_msec() * 0.001) * 0.25
+		# The little stone on the altar glows brighter and dimmer, slow as breathing.
+		var breath := 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.0012)
+		(_crystal.get_child(1) as OmniLight3D).light_energy = lerpf(0.4, 1.0, breath)
 	_update_underwater_view(delta)
 	_update_story(delta)
+	_update_explored(delta)
 	_camp_check -= delta
 	if _camp_check <= 0.0:
 		_camp_check = 1.0
 		_update_camps()
+
+
+# --- The map -----------------------------------------------------------------
+
+var _explore_timer := 0.0
+
+
+## The land as the map draws it, sketched in charcoal and washes: water,
+## meadow, forest, rock, with faint height lines. Only the parts he's seen
+## ever show.
+func _map_image() -> Image:
+	var n := 384
+	var img := Image.create(n, n, false, Image.FORMAT_RGB8)
+	var paper := Color(0.84, 0.76, 0.6)
+	for j in n:
+		for i in n:
+			var x := (i + 0.5) / n * Game.TERRAIN_SIZE - Game.TERRAIN_SIZE * 0.5
+			var z := (j + 0.5) / n * Game.TERRAIN_SIZE - Game.TERRAIN_SIZE * 0.5
+			var h := Game.height_at(x, z)
+			var c := paper.lerp(Color(0.62, 0.68, 0.42), 0.5)  # meadow
+			if h < WATER_LEVEL:
+				c = Color(0.52, 0.66, 0.72).lerp(Color(0.36, 0.5, 0.62), clampf((WATER_LEVEL - h) / 2.0, 0.0, 1.0))
+			elif h < WATER_LEVEL + 0.5:
+				c = paper.lerp(Color(0.8, 0.72, 0.52), 0.6)  # shore
+			else:
+				if Game.story_start:
+					c = c.lerp(Color(0.3, 0.42, 0.24), _forest_amount(x, z) * 0.85)
+				if h > 14.0:
+					c = c.lerp(Color(0.55, 0.5, 0.44), clampf((h - 14.0) / 10.0, 0.0, 1.0))
+				if fposmod(h, 3.0) < 0.3:
+					c = c.darkened(0.18)  # height lines
+			if Vector2(x, z).length() < 16.0:
+				c = c.lerp(Color(0.7, 0.68, 0.6), 0.6)  # the Sanctum's stone floor
+			img.set_pixel(i, j, c)
+	return img
+
+
+## Marks the ground around him as seen, a couple of times a second.
+func _update_explored(delta: float) -> void:
+	var p := Game.player
+	if not Game.story_start or p == null:
+		return
+	_explore_timer -= delta
+	if _explore_timer <= 0.0:
+		_explore_timer = 0.5
+		Game.explore_at(p.global_position)
+
+
+## The morning after the long night, heading out: the Fox worries they'll get
+## lost, and the Otter has the idea.
+func _suggest_map() -> void:
+	if Game.known.has("map") or _fox == null:
+		return
+	_fox.say(["Heading out into all THAT? We'll be lost in five minutes.", "Four, if you're leading."])
+	get_tree().create_timer(7.6).timeout.connect(func():
+		_otter.say(["Ooh! Ooh! We make a MAP!", "Charcoal from the fire to draw with. Birch bark to draw on!", "Then we always know where we've been. And how to get home."]))
+	get_tree().create_timer(19.0).timeout.connect(func():
+		Game.learn("map", ["A map. Charcoal from the fire, bark to draw on.", "Then we never get lost."], "Otter")
+		_start_map_quest())
+
+
+func _start_map_quest() -> void:
+	Game.start_quest("map", "Draw a Map", ["Get charcoal from the campfire (E at the fire)", "Peel birch bark  0/2", "Make the map (Tab → Know-how)"], false, "Otter")
+
+
+func _update_map_goal() -> void:
+	if Game.quest("map").is_empty():
+		return
+	if Game.has_map():
+		Game.complete_quest("map")
+		return
+	var bark: int = Game.inventory.get("Birch bark", 0)
+	Game.set_step("map", 0, "Get charcoal from the campfire (E at the fire)", Game.has_items("Charcoal"))
+	Game.set_step("map", 1, "Peel birch bark  %d/2" % mini(bark, 2), bark >= 2)
 
 
 # --- Look & feel -------------------------------------------------------------
@@ -272,8 +643,10 @@ func _make_materials() -> void:
 	_bark = MeshKit.mat(Color(0.33, 0.24, 0.17), 0.95)
 	_obsidian = MeshKit.mat(Color(0.14, 0.14, 0.19), 0.25, 0.6)
 	_iron = MeshKit.mat(Color(0.22, 0.22, 0.25), 0.4, 0.8)
-	_rune_mat = MeshKit.glow(Color(0.35, 0.9, 1.0), 4.0)
-	_gold_rune_mat = MeshKit.glow(Color(1.0, 0.75, 0.3), 3.0)
+	# The old carvings have long since grown over: moss in the grooves, and
+	# here and there a crust of golden lichen.
+	_rune_mat = MeshKit.mat(Color(0.3, 0.45, 0.2), 0.95)
+	_gold_rune_mat = MeshKit.mat(Color(0.7, 0.6, 0.25), 0.95)
 	_fire_mat = MeshKit.glow(Color(1.0, 0.5, 0.15), 6.0)
 
 
@@ -325,6 +698,9 @@ func _build_environment() -> void:
 	sun.directional_shadow_max_distance = 140.0
 	sun.light_volumetric_fog_energy = 1.5
 	add_child(sun)
+	_sun = sun
+	_sky_material = sky_mat
+	Game.is_night = Game.story_start
 	if Game.story_start:
 		_make_night(env, sky_mat, sun)
 		_air_fog = [env.fog_light_color, env.fog_density, env.volumetric_fog_albedo, env.volumetric_fog_density, env.adjustment_saturation]
@@ -357,8 +733,8 @@ func _make_night(env: Environment, sky_mat: ProceduralSkyMaterial, moon_light: D
 	moon_light.light_volumetric_fog_energy = 3.0
 	# The moon sits where the light comes from.
 	var toward_moon := moon_light.global_transform.basis.z if moon_light.is_inside_tree() else Basis.from_euler(moon_light.rotation).z
-	var moon := MeshKit.part(self, MeshKit.sphere(14.0, -1.0, 24, 12), _sky_mat(Color(0.92, 0.95, 1.0), 6.0), toward_moon * 520.0)
-	moon.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_moon = MeshKit.part(self, MeshKit.sphere(14.0, -1.0, 24, 12), _sky_mat(Color(0.92, 0.95, 1.0), 6.0), toward_moon * 520.0)
+	_moon.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var stars := MultiMesh.new()
 	stars.transform_format = MultiMesh.TRANSFORM_3D
 	stars.mesh = MeshKit.sphere(0.9, -1.0, 4, 2)
@@ -372,6 +748,37 @@ func _make_night(env: Environment, sky_mat: ProceduralSkyMaterial, moon_light: D
 	star_node.multimesh = stars
 	star_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(star_node)
+	_stars = star_node
+
+
+## Early morning after the first night: a pink-gold sky, low warm sun through
+## the trees, soft peach mist. (Swapped in while the screen is black.)
+func _make_dawn() -> void:
+	Game.is_night = false
+	_moon.visible = false
+	_stars.visible = false
+	_sky_material.sky_top_color = Color(0.36, 0.52, 0.8)
+	_sky_material.sky_horizon_color = Color(0.98, 0.7, 0.58)
+	_sky_material.ground_horizon_color = Color(0.62, 0.52, 0.46)
+	_sky_material.ground_bottom_color = Color(0.16, 0.15, 0.14)
+	_sky_material.sun_angle_max = 25.0
+	_sky_material.sun_curve = 0.15
+	_env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	_env.ambient_light_energy = 1.0
+	_env.fog_light_color = Color(0.86, 0.7, 0.62)
+	_env.fog_density = 0.004
+	_env.fog_sky_affect = 0.3
+	_env.volumetric_fog_density = 0.01
+	_env.volumetric_fog_albedo = Color(1.0, 0.86, 0.76)
+	_env.volumetric_fog_emission = Color(0, 0, 0)
+	_env.adjustment_saturation = 1.08
+	_env.glow_intensity = 0.8
+	_env.glow_hdr_threshold = 0.9
+	_sun.rotation_degrees = Vector3(-16.0, -70.0, 0.0)
+	_sun.light_color = Color(1.0, 0.78, 0.58)
+	_sun.light_energy = 1.15
+	_sun.light_volumetric_fog_energy = 2.0
+	_air_fog = [_env.fog_light_color, _env.fog_density, _env.volumetric_fog_albedo, _env.volumetric_fog_density, _env.adjustment_saturation]
 
 
 func _sky_mat(color: Color, energy: float) -> StandardMaterial3D:
@@ -545,7 +952,9 @@ func _build_grass() -> void:
 		if _rng.randf() < 0.08:
 			green = green.lerp(Color(0.62, 0.56, 0.28), 0.6)  # dry straw blades here and there
 		green = green.lerp(Color(0.12, 0.2, 0.08), in_forest * 0.6)
-		buckets[_rng.randi() % 3].append([Transform3D(basis, Vector3(x, h - 0.02, z)), green])
+		var bucket := _rng.randi() % 3
+		if not _near_ring(x, z):
+			buckets[bucket].append([Transform3D(basis, Vector3(x, h - 0.02, z)), green])
 	for k in meshes.size():
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -568,48 +977,78 @@ func _build_sanctum() -> void:
 	var body := StaticBody3D.new()
 	body.name = "Sanctum"
 	add_child(body)
-	_add_cylinder(body, 11.0, 11.5, 0.8, Vector3(0, 0.3, 0), _stone_mats[2], 32)
-	_add_cylinder(body, 6.0, 6.3, 0.4, Vector3(0, 0.85, 0), _stone_mats[0], 32)
-	var rune_ring := TorusMesh.new()
-	rune_ring.inner_radius = 5.3
-	rune_ring.outer_radius = 5.55
-	rune_ring.rings = 64
-	MeshKit.part(body, rune_ring, _rune_mat, Vector3(0, 1.06, 0))
-	for i in 8:
-		var a := TAU * i / 8.0
-		var base := Vector3(cos(a) * 9.0, 0.7, sin(a) * 9.0)
-		var h := 6.0 if i % 2 == 0 else 3.5
-		_add_cylinder(body, 0.55, 0.65, h, base + Vector3(0, h * 0.5, 0), _stone_mats[1], 10)
-		MeshKit.part(body, MeshKit.cyl(0.62, 0.62, 0.15, 10), _rune_mat, base + Vector3(0, h * 0.6, 0))
-		if i % 2 == 0:
-			_add_box(body, Vector3(1.6, 0.4, 1.6), base + Vector3(0, h + 0.2, 0), Vector3(0, a, 0), _stone_mats[2])
+	# An old stone circle, older than anyone remembers: a worn, mossy floor,
+	# standing stones (one long fallen), and a low altar stone in the middle
+	# with a small pale stone on it that glows, faintly, like it's breathing.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 1771
+	var worn := MeshKit.mat(Color(0.56, 0.55, 0.48), 0.95)
+	var moss := MeshKit.mat(Color(0.3, 0.44, 0.2), 0.95)
+	var deep_moss := MeshKit.mat(Color(0.22, 0.36, 0.16), 0.95)
+	_add_cylinder(body, 11.0, 11.5, 0.8, Vector3(0, 0.3, 0), worn, 14)
+	_add_cylinder(body, 6.0, 6.3, 0.4, Vector3(0, 0.85, 0), _stone_mats[1], 12)
+	# Moss creeping over the floor.
+	for k in 14:
+		var a := rng.randf() * TAU
+		var r := rng.randf_range(3.0, 10.0)
+		var s := rng.randf_range(0.8, 2.0)
+		var y := 1.07 if r < 6.0 else 0.72
+		var patch := MeshKit.part(body, MeshKit.cyl(s, s * 1.1, 0.04, 9), moss if k % 3 else deep_moss, Vector3(cos(a) * r, y, sin(a) * r))
+		patch.scale = Vector3(1.0, 1.0, rng.randf_range(0.5, 1.0))
+		patch.rotation.y = rng.randf() * TAU
+	# The standing stones, rough and leaning a little, each with a mossy cap.
+	for i in 9:
+		var a := TAU * i / 9.0 + rng.randf_range(-0.08, 0.08)
+		var base := Vector3(cos(a) * 8.6, 0.7, sin(a) * 8.6)
+		var size := Vector3(rng.randf_range(1.0, 1.4), rng.randf_range(2.4, 4.2), rng.randf_range(0.6, 0.85))
+		if i == 6:
+			# This one fell long ago and lies in the grass.
+			_add_box(body, Vector3(size.x, size.z, size.y), base + Vector3(0, size.z * 0.5 - 0.05, 0), Vector3(0, -a + 0.3, 0.05), _stone_mats[0])
+			MeshKit.part(body, MeshKit.box(Vector3(size.x * 0.9, 0.06, size.y * 0.7)), moss, base + Vector3(0, size.z - 0.02, 0), Vector3(0, -a + 0.3, 0.05))
+			continue
+		# Rough and tapering, wider than deep, leaning a little.
+		var lean := Vector3(rng.randf_range(-0.07, 0.07), PI / 2 - a + rng.randf_range(-0.2, 0.2), rng.randf_range(-0.07, 0.07))
+		var flat := Vector3(size.x, 1.0, size.z) / 0.9
+		var stone := MeshKit.part(body, MeshKit.cyl(0.3, 0.45, size.y, 6), _stone_mats[rng.randi() % 3], base + Vector3(0, size.y * 0.5 - 0.1, 0), lean)
+		stone.scale = flat
+		var cap := MeshKit.part(body, MeshKit.sphere(0.33, 0.22, 7, 3), moss, base + Vector3(0, size.y - 0.12, 0), lean)
+		cap.scale = flat
+		# Moss climbing up from the ground.
+		var foot := MeshKit.part(body, MeshKit.cyl(0.43, 0.47, size.y * 0.22, 6), deep_moss, base + Vector3(0, size.y * 0.11 - 0.1, 0), lean)
+		foot.scale = flat
+		var shape := CollisionShape3D.new()
+		var box := BoxShape3D.new()
+		box.size = Vector3(size.x * 0.85, size.y, size.z * 0.85)
+		shape.shape = box
+		shape.position = base + Vector3(0, size.y * 0.5 - 0.1, 0)
+		shape.rotation = lean
+		body.add_child(shape)
+	# The altar stone.
+	_add_box(body, Vector3(1.8, 0.6, 1.1), Vector3(0, 1.35, 0), Vector3.ZERO, _stone_mats[0])
+	_add_box(body, Vector3(2.1, 0.16, 1.3), Vector3(0, 1.72, 0), Vector3(0, 0.04, 0), _stone_mats[2])
+	MeshKit.part(body, MeshKit.box(Vector3(0.9, 0.04, 0.6)), moss, Vector3(-0.5, 1.81, 0.25), Vector3(0, 0.3, 0))
 
 	_crystal = Node3D.new()
-	_crystal.position = Vector3(0, 4.4, 0)
+	_crystal.position = Vector3(0, 1.96, -0.38)
 	add_child(_crystal)
-	MeshKit.part(_crystal, MeshKit.sphere(0.9, 3.2, 6, 2), MeshKit.glow(Color(0.4, 0.9, 1.0), 3.0))
+	MeshKit.part(_crystal, MeshKit.sphere(0.2, 0.3, 7, 4), MeshKit.glow(Color(0.75, 0.95, 0.9), 1.6))
 	var light := OmniLight3D.new()
-	light.light_color = Color(0.4, 0.9, 1.0)
-	light.light_energy = 2.5
-	light.omni_range = 20.0
+	light.light_color = Color(0.75, 0.95, 0.9)
+	light.light_energy = 0.8
+	light.omni_range = 7.0
+	light.position.y = 0.3
 	_crystal.add_child(light)
-	Audio.attach_loop(_crystal, "loop_crystal", 0.0, 28.0, 8.0)
-
-	var title := Label3D.new()
-	title.text = "THE SANCTUM"
-	title.font_size = 72
-	title.outline_size = 16
-	title.pixel_size = 0.008
-	title.modulate = Color(0.75, 0.95, 1.0)
-	title.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	title.position = Vector3(0, 7.2, 0)
-	add_child(title)
+	Audio.attach_loop(_crystal, "loop_crystal", -10.0, 16.0, 4.0)
 
 
+## One plain tool waiting on the altar stone, as if left there for him: an
+## oak sling. Fancier things come later.
 func _place_starter_loot() -> void:
-	var picks := [["Hand Cannon", 1, Vector3(-3.2, 1.05, 1.6)], ["Scattergun", 1, Vector3(0, 1.05, 3.0)], ["Rune SMG", 2, Vector3(3.2, 1.05, 1.6)]]
-	for pick in picks:
-		LootDrop.spawn(self, WeaponData.generate(1, Game.rng, 0.0, pick[0], pick[1]), pick[2], false)
+	var sling := WeaponData.generate(1, Game.rng, 0.0, "Hand Cannon", 0)
+	sling.element = WeaponData.Element.KINETIC
+	sling.perks.clear()
+	sling.display_name = "Old Oak Sling"
+	LootDrop.spawn(self, sling, Vector3(0, 1.2, 0.1), false)
 
 
 const FOREST_RADIUS := 125.0
@@ -633,6 +1072,7 @@ func _forest_amount(x: float, z: float) -> float:
 ## (thick in places, with gaps and clearings), fallen logs, things to gather,
 ## and a forest floor of leaf litter, twigs, pebbles, ferns and mushrooms.
 func _build_forest(center: Vector3) -> void:
+	Animal.trunks.clear()
 	_great_tree(Vector3(center.x, Game.ground_under(center.x, center.z, 1.4) - 0.3, center.z))
 	var clumps := FastNoiseLite.new()
 	clumps.seed = 99
@@ -665,6 +1105,7 @@ func _build_forest(center: Vector3) -> void:
 		var basis := (Basis(Vector3.UP, _rng.randf() * TAU) * Basis.from_euler(Vector3(_rng.randf_range(-0.04, 0.04), 0, _rng.randf_range(-0.04, 0.04)))).scaled(Vector3.ONE * s)
 		var leaf := Color(0.08, 0.2, 0.11).lerp(Color(0.18, 0.28, 0.12), _rng.randf())
 		buckets[k].append([Transform3D(basis, base), leaf])
+		Animal.trunks.append([base, 0.3 * s])
 		var shape := CollisionShape3D.new()
 		var cyl := CylinderShape3D.new()
 		cyl.radius = 0.3 * s
@@ -751,27 +1192,31 @@ func _place_gatherables(center: Vector3) -> void:
 	var ahead := (Vector3.ZERO - center).normalized().rotated(Vector3.UP, 0.5)
 	ahead.y = 0.0
 	var side := ahead.cross(Vector3.UP)
-	Gatherable.spawn(self, _seated(center + ahead * 4.6 + side * 2.8, 0.7, 0.0), "fire_ring", _rng)
-	var starter := [["sticks", 6.0, -1.8], ["stones", 8.5, 2.2], ["ferns", 10.0, -3.8]]
+	_fire_ring = Gatherable.spawn(self, Vector3(_ring_spot.x, Game.ground_at(_ring_spot.x, _ring_spot.z) - 0.02, _ring_spot.z), "fire_ring", _rng)
+	var tilt := Quaternion(Vector3.UP, _ground_normal(_ring_spot.x, _ring_spot.z))
+	_fire_ring.basis = Basis(tilt) * _fire_ring.basis  # lying along the slope
+	var starter := [["sticks", 6.0, -1.8], ["stones", 8.5, 2.2]]
 	for s in starter:
 		var p: Vector3 = center + ahead * float(s[1]) + side * float(s[2])
 		p.y = Game.ground_at(p.x, p.z)
 		Gatherable.spawn(self, p, s[0], _rng)
-	var near := [["sticks", 4], ["stones", 3], ["berries", 1], ["ferns", 3]]
+	# Right around camp: only what the fire needs. Everything else is a short
+	# walk out, so the first minutes are just sticks and stones.
+	var near := [["sticks", 5, 6.0, 16.0], ["stones", 4, 6.0, 16.0], ["berries", 2, 24.0, 40.0], ["ferns", 4, 24.0, 40.0], ["vines", 2, 28.0, 45.0], ["bark", 2, 28.0, 45.0]]
 	for entry in near:
 		for i in entry[1]:
 			var a := _rng.randf() * TAU
-			var p := center + Vector3(cos(a), 0, sin(a)) * _rng.randf_range(9.0, 22.0)
+			var p := center + Vector3(cos(a), 0, sin(a)) * _rng.randf_range(entry[2], entry[3])
 			p.y = Game.ground_at(p.x, p.z)
 			Gatherable.spawn(self, p, entry[0], _rng)
-	var far := [["sticks", 70], ["stones", 40], ["berries", 30], ["ferns", 45]]
+	var far := [["sticks", 70], ["stones", 40], ["berries", 30], ["ferns", 45], ["vines", 30], ["bark", 25]]
 	for entry in far:
 		var placed := 0
 		var tries := 0
 		while placed < entry[1] and tries < 2000:
 			tries += 1
 			var a := _rng.randf() * TAU
-			var p := center + Vector3(cos(a), 0, sin(a)) * _rng.randf_range(10.0, FOREST_RADIUS)
+			var p := center + Vector3(cos(a), 0, sin(a)) * _rng.randf_range(10.0 if entry[0] in ["sticks", "stones"] else 24.0, FOREST_RADIUS)
 			p.y = Game.ground_at(p.x, p.z)
 			if p.y < WATER_LEVEL + 0.2 or _forest_amount(p.x, p.z) < 0.3:
 				continue
@@ -887,7 +1332,8 @@ func _scatter(mesh: Mesh, center: Vector3, radius: float, count: int, style: Cal
 		if _rng.randf() > (clusters.get_noise_2d(p.x, p.z) * 0.5 + 0.55) * smoothstep(radius, radius * 0.6, d):
 			continue
 		var look: Array = style.call(p)
-		items.append([Transform3D(look[0], Vector3(p.x, h, p.z)), look[1]])
+		if not _near_ring(p.x, p.z):
+			items.append([Transform3D(look[0], Vector3(p.x, h, p.z)), look[1]])
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
@@ -905,6 +1351,36 @@ func _scatter(mesh: Mesh, center: Vector3, radius: float, count: int, style: Cal
 
 func _near_wake(p: Vector3, margin: float) -> bool:
 	return Game.story_start and Vector2(p.x - Game.wake_point.x, p.z - Game.wake_point.z).length() < margin
+
+
+## Where the old fire ring sits: in plain sight, a few steps from where he
+## wakes, on the flattest bit of ground thereabouts so none of it sinks in.
+func _fire_ring_spot(center: Vector3) -> Vector3:
+	var ahead := (Vector3.ZERO - center).normalized().rotated(Vector3.UP, 0.5)
+	ahead.y = 0.0
+	var planned := center + ahead * 4.6 + ahead.cross(Vector3.UP) * 2.8
+	var best := planned
+	var best_slope := INF
+	for ring in [0.0, 0.8, 1.6, 2.4]:
+		for k in 8:
+			var q: Vector3 = planned + Vector3.FORWARD.rotated(Vector3.UP, TAU * k / 8.0) * ring
+			if Vector2(q.x - center.x, q.z - center.z).length() < 3.5:
+				continue  # not on top of the sleepers
+			var slope: float = absf(Game.ground_at(q.x + 1.0, q.z) - Game.ground_at(q.x - 1.0, q.z)) + absf(Game.ground_at(q.x, q.z + 1.0) - Game.ground_at(q.x, q.z - 1.0)) + ring * 0.05
+			if slope < best_slope:
+				best_slope = slope
+				best = q
+	return best
+
+
+## The ground's tilt at a spot, for laying flat things along it.
+func _ground_normal(x: float, z: float) -> Vector3:
+	return Vector3(Game.ground_at(x - 0.8, z) - Game.ground_at(x + 0.8, z), 1.6, Game.ground_at(x, z - 0.8) - Game.ground_at(x, z + 0.8)).normalized()
+
+
+## Kept bare around the old fire ring (no grass, ferns or leaves), so it stands out.
+func _near_ring(x: float, z: float) -> bool:
+	return Vector2(x - _ring_spot.x, z - _ring_spot.z).length() < 1.9
 
 
 func _scatter_props() -> void:
@@ -999,9 +1475,9 @@ func _monolith(p: Vector3) -> void:
 	MeshKit.part(body, MeshKit.box(Vector3(0.08, 5.5, 0.72)), _rune_mat, Vector3(0, 3.6, 0))
 	MeshKit.part(body, MeshKit.sphere(0.4, 1.2, 4, 2), _rune_mat, Vector3(0, 8.0, 0))
 	var light := OmniLight3D.new()
-	light.light_color = Color(0.4, 0.9, 1.0)
-	light.light_energy = 1.5
-	light.omni_range = 9.0
+	light.light_color = Color(0.7, 0.9, 0.8)
+	light.light_energy = 0.4
+	light.omni_range = 6.0
 	light.position = Vector3(0, 4.0, 1.0)
 	body.add_child(light)
 	var hum := Audio.attach_loop(body, "loop_crystal", -8.0, 16.0, 3.0)
@@ -1162,6 +1638,208 @@ func _deepest_point() -> Vector3:
 
 func _take_screenshot() -> void:
 	await get_tree().create_timer(Game.screenshot_delay).timeout
+	if Game.shot_tools:
+		# The five dream tools in a row, and the hero holding the wand.
+		var pl := Game.player
+		var at := Vector3(40.0, 0.0, 40.0)
+		at.y = Game.ground_at(at.x, at.z)
+		var k := 0
+		for kind in WeaponData.ARCHETYPES:
+			var w := WeaponData.generate(1, Game.rng, 0.0, kind, k % 5)
+			var x := at.x + (k - 2) * 1.3
+			LootDrop.spawn(self, w, Vector3(x, Game.ground_at(x, at.z) - 0.2, at.z), false)
+			print("%s -> %s" % [kind, w.display_name])
+			k += 1
+		pl.global_position = at + Vector3(0, 0.1, 4.2)
+		pl._yaw = 0.0
+		pl._pitch = -0.15
+		pl.zoom = 0.0
+		pl.visible = false
+		await get_tree().create_timer(2.0).timeout
+		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_tools.png"))
+		pl.visible = true
+		pl.global_position = at + Vector3(0, 0.1, 8.0)
+		pl._yaw = 0.9
+		pl.zoom = 2.5
+		await get_tree().create_timer(1.5).timeout
+		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_held.png"))
+		get_tree().quit()
+		return
+	if Game.shot_sit:
+		await _test_sit()
+		get_tree().quit()
+		return
+	if Game.shot_burn:
+		await _test_burns()
+		get_tree().quit()
+		return
+	if Game.shot_drown:
+		await _test_drown()
+		get_tree().quit()
+		return
+	if Game.shot_birds:
+		await _test_birds()
+		get_tree().quit()
+		return
+	if Game.shot_animals:
+		await _test_animals()
+		get_tree().quit()
+		return
+	if Game.shot_save:
+		await _test_save()
+		return
+	if Game.shot_map:
+		await _test_map()
+		get_tree().quit()
+		return
+	if Game.shot_ring:
+		# The old fire ring, from a few steps away, as you first see it.
+		var pl := Game.player
+		pl._end_wake()
+		var ring := _fire_ring.global_position
+		var from := (pl.global_position - ring)
+		from.y = 0.0
+		pl.global_position = ring + from.normalized() * 3.0 + Vector3.UP * 0.5
+		pl._yaw = atan2(from.x, from.z)
+		pl._pitch = -0.45
+		pl.visible = false
+		pl.zoom = 0.0
+		await get_tree().create_timer(1.5).timeout
+		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_ring.png"))
+		# Then the pets settling down while he stands still, and pointing the
+		# dot at things.
+		var snap := func(tag: String):
+			get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_%s.png" % tag))
+		pl.visible = true
+		pl.zoom = 3.4
+		await get_tree().create_timer(36.0).timeout  # through the opening lines
+		for c in [_fox, _otter]:
+			if c._zzz:
+				c._zzz.queue_free()
+			c.body.rotation.z = 0.0
+			c.follow()
+		pl._pitch = -0.6
+		await get_tree().create_timer(14.0).timeout
+		snap.call("resting")
+		print("lounging: fox %s otter %s" % [_fox.body.lounging, _otter.body.lounging])
+		print("otter body lift %.2f (should stay under 0.6), fox rig %s" % [_otter.body._body.position.y, _fox.body._rig.position if _fox.body._rig else Vector3.ZERO])
+		print("fox states: %s" % [_fox.body._rig.states() if _fox.body._rig else []])
+		# A fire right where the pets like to lie: the next spot they pick
+		# must keep clear of it.
+		var fire_at := pl.global_position + Vector3(cos(pl._yaw), 0, -sin(pl._yaw)) * 3.0
+		Campfire.build(self, Vector3(fire_at.x, Game.ground_at(fire_at.x, fire_at.z), fire_at.z))
+		var near_fire := 0
+		for k in 40:
+			for c in [_fox, _otter]:
+				c._wander_timer = 0.0
+				c._antsy(0.0, pl)
+				if Vector2(c._wander_point.x - fire_at.x, c._wander_point.z - fire_at.z).length() < 2.2:
+					near_fire += 1
+		print("lounge spots inside the fire's reach: %d of 80" % near_fire)
+		# A close look at the Fox lying on his side.
+		_fox._wander_timer = 999.0
+		_fox._wander_point = _fox.body.position
+		_fox.body.lounging = true
+		var fx: Vector3 = _fox.body.position
+		pl.global_position = Vector3(fx.x + 2.2, Game.ground_at(fx.x + 2.2, fx.z) + 0.1, fx.z)
+		pl._yaw = PI / 2
+		pl._pitch = -0.35
+		pl.zoom = 2.0
+		pl.visible = false
+		await get_tree().create_timer(2.5).timeout
+		snap.call("fox_lying")
+		print("fox lying: rig %s roll %.2f" % [_fox.body._rig.position if _fox.body._rig else Vector3.ZERO, _fox.body._rig.rotation.z if _fox.body._rig else 0.0])
+		pl.visible = true
+		print("aiming at ring: focused %s" % pl.focused)
+		print("frozen %s, fox state %d" % [pl.frozen, _fox.state])
+		for target in [_fox, _otter]:
+			var found := false
+			for k in 72:
+				pl._yaw = TAU * k / 72.0
+				for pitch in [-0.3, -0.5, -0.7]:
+					pl._pitch = pitch
+					await get_tree().process_frame
+					await get_tree().process_frame
+					if pl.focused == target:
+						found = true
+						break
+				if found:
+					break
+			print("pointing at %s: %s" % [target.who, found])
+			if found:
+				snap.call("point_" + target.who)
+		get_tree().quit()
+		return
+	if Game.shot_camp or Game.shot_dawn:
+		var pl := Game.player
+		pl._end_wake()
+		for c in [_fox, _otter]:
+			c.state = Companion.State.FOLLOWING
+			if c._zzz:
+				c._zzz.queue_free()
+			c.body.rotation.z = 0.0
+		var fwd := pl._aim_flat()
+		var fire_at := pl.global_position + fwd * 2.4 + fwd.cross(Vector3.UP) * 1.6
+		fire_at.y = Game.ground_at(fire_at.x, fire_at.z)
+		Campfire.build(self, fire_at)
+		var shot := func(tag: String):
+			get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_%s.png" % tag))
+		if Game.shot_camp:
+			# The Fox's cooking idea, the fire menu, a find for the Otter, and the new builds.
+			await get_tree().create_timer(9.0).timeout
+			Game.add_item("Fish", 2)
+			Game.add_item("Grubs", 3)
+			await get_tree().create_timer(13.0).timeout
+			var to_fire := fire_at - pl.global_position
+			pl.global_position = fire_at - to_fire.normalized() * 1.6
+			_hud._open_fire(get_tree().get_nodes_in_group("campfires")[0])
+			await get_tree().create_timer(0.5).timeout
+			shot.call("fire")
+			_hud._talk.close()
+			pl.cook("Fish", get_tree().get_nodes_in_group("campfires")[0])
+			var vine_at := pl.global_position + fwd * 1.2
+			vine_at.y = Game.ground_at(vine_at.x, vine_at.z)
+			var vines := Gatherable.spawn(self, vine_at, "vines", _rng)
+			await get_tree().create_timer(1.0).timeout
+			shot.call("vines")
+			vines.gather(_rng)
+			Game.add_item("Birch bark", 3)
+			Game.spark("rain_catcher")
+			await get_tree().create_timer(8.0).timeout
+			_otter.body.global_position = pl.global_position + fwd * 1.5
+			_hud._talk.open(_otter)
+			await get_tree().create_timer(0.5).timeout
+			shot.call("otter")
+			_hud._talk.close()
+			_otter._teach_spark()
+			await get_tree().create_timer(13.0).timeout
+			_otter._teach_spark()
+			await get_tree().create_timer(13.0).timeout
+			Game.add_item("Sticks", 10)
+			Game.add_item("Vines", 2)
+			pl._yaw += 2.2
+			for id in ["torch_post", "rain_catcher"]:
+				pl._yaw -= 0.5
+				pl.begin_placing(id)
+				await get_tree().create_timer(0.4).timeout
+				pl._build(id, pl._placer.global_position, pl._placer.rotation.y)
+				pl.cancel_placing()
+			await get_tree().create_timer(1.0).timeout
+			shot.call("built")
+			_hud._inventory._tab = "Know-how"
+			_hud._inventory.open()
+			await get_tree().create_timer(0.6).timeout
+			shot.call("knowhow")
+		else:
+			# Sitting up with the boys, the fade, and morning.
+			await get_tree().create_timer(2.0).timeout
+			Game.rest_ready = true
+			Game.rest_requested.emit()
+			for t in [6.0, 14.0, 20.0, 12.0]:
+				await get_tree().create_timer(t).timeout
+				shot.call("%d" % int(Time.get_ticks_msec() / 1000))
+		get_tree().quit()
+		return
 	if Game.shot_settle:
 		# After the fire: the new quest, talking to the Otter, and a lean-to.
 		var pl := Game.player
@@ -1193,6 +1871,17 @@ func _take_screenshot() -> void:
 		pl.cancel_placing()
 		await get_tree().create_timer(1.0).timeout
 		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_built.png"))
+		# Walk at it from behind: the roof should stop him.
+		var lean: Node3D = get_tree().get_nodes_in_group("shelters")[0]
+		var d := lean.global_basis * Vector3.BACK
+		pl.global_position = lean.global_transform * Vector3(0, 0, -Shelter.DEPTH - 1.5) + Vector3.UP * 0.5
+		pl._yaw = atan2(-d.x, -d.z)
+		await get_tree().create_timer(0.5).timeout
+		Input.action_press("move_forward")
+		await get_tree().create_timer(3.0).timeout
+		Input.action_release("move_forward")
+		print("walked into lean-to: local z %.2f (through if > 0)" % (lean.global_transform.affine_inverse() * pl.global_position).z)
+		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_blocked.png"))
 		get_tree().quit()
 		return
 	if Game.shot_forage:
@@ -1248,3 +1937,374 @@ func _take_screenshot() -> void:
 	var image := get_viewport().get_texture().get_image()
 	image.save_png(Game.screenshot_path)
 	get_tree().quit()
+
+
+## Test hook (--shot-burn): the hero, the Fox and the Otter each step into a
+## campfire, and the hero brushes a torch.
+func _test_burns() -> void:
+	var pl := Game.player
+	pl._end_wake()
+	for c in [_fox, _otter]:
+		c.state = Companion.State.FOLLOWING
+		if c._zzz:
+			c._zzz.queue_free()
+		c.body.rotation.z = 0.0
+	var fwd := pl._aim_flat()
+	var fire_at := pl.global_position - fwd * 4.0 + fwd.cross(Vector3.UP) * 2.0
+	fire_at.y = Game.ground_at(fire_at.x, fire_at.z)
+	Campfire.build(self, fire_at)
+	var shot := func(tag: String):
+		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_%s.png" % tag))
+	await get_tree().create_timer(9.0).timeout
+	var h0 := pl.health
+	pl.global_position = fire_at - fwd * 0.3 + Vector3.UP * 0.1
+	await get_tree().create_timer(0.35).timeout
+	shot.call("hero")
+	await get_tree().create_timer(1.6).timeout
+	print("hero health %.1f -> %.1f, distance from fire %.2f" % [h0, pl.health, Vector2(pl.global_position.x - fire_at.x, pl.global_position.z - fire_at.z).length()])
+	shot.call("hero_after")
+	# Look at the hero from the fire side to see the smudge on the shin.
+	pl._yaw += PI
+	await get_tree().create_timer(0.6).timeout
+	shot.call("hero_mark")
+	pl._yaw -= PI
+	pl.global_position = fire_at - fwd * 3.5
+	await get_tree().create_timer(2.0).timeout
+	for c in [_fox, _otter]:
+		c._careless = true
+		c.body.global_position = fire_at + fwd.cross(Vector3.UP) * 0.3
+		await get_tree().create_timer(0.4).timeout
+		shot.call(c.who)
+		await get_tree().create_timer(4.0).timeout
+	shot.call("pets_after")
+	var torch_at := pl.global_position + fwd.cross(Vector3.UP) * 2.0
+	torch_at.y = Game.ground_at(torch_at.x, torch_at.z)
+	TorchPost.build(self, torch_at)
+	await get_tree().create_timer(4.0).timeout
+	var h1 := pl.health
+	pl.global_position = torch_at + Vector3(0.1, 0.05, 0)
+	await get_tree().create_timer(0.4).timeout
+	shot.call("torch")
+	print("torch: health %.1f -> %.1f" % [h1, pl.health])
+
+
+## Test hook (--shot-sit): sit down by a fire with the pets, roast a fish
+## (flip included), feed the Otter, then get up.
+func _test_sit() -> void:
+	var pl := Game.player
+	pl._end_wake()
+	for c in [_fox, _otter]:
+		c.state = Companion.State.FOLLOWING
+		if c._zzz:
+			c._zzz.queue_free()
+		c.body.rotation.z = 0.0
+	var fwd := pl._aim_flat()
+	var fire_at := pl.global_position - fwd * 4.0 + fwd.cross(Vector3.UP) * 2.0
+	fire_at.y = Game.ground_at(fire_at.x, fire_at.z)
+	var fire := Campfire.build(self, fire_at)
+	var shot := func(tag: String):
+		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_%s.png" % tag))
+	await get_tree().create_timer(9.0).timeout
+	Game.learn("cooking")
+	Game.add_item("Fish", 2)
+	pl.global_position = fire_at + fwd * 2.0
+	await get_tree().create_timer(0.5).timeout
+	pl.sit_by_fire(fire)
+	await get_tree().create_timer(4.0).timeout
+	shot.call("sit")
+	pl._yaw += 1.3
+	await get_tree().create_timer(0.5).timeout
+	shot.call("sit_side")
+	pl._yaw -= 1.3
+	pl.cook("Fish", fire)
+	await get_tree().create_timer(2.3).timeout
+	shot.call("cook_flip")
+	pl.cook_needs_flip = false
+	pl._cook_flipped = true
+	await get_tree().create_timer(2.5).timeout
+	print("after one: fish %d, roast %d" % [Game.inventory.get("Fish", 0), Game.inventory.get("Roast fish", 0)])
+	pl.stop_cooking()
+	_otter.hunger = 30.0
+	_hud._talk.open(_otter)
+	await get_tree().create_timer(0.4).timeout
+	shot.call("otter_menu")
+	_hud._talk.close()
+	_otter.feed("Roast fish")
+	await get_tree().create_timer(1.0).timeout
+	shot.call("fed")
+	print("otter hunger %.0f" % _otter.hunger)
+	pl.get_up()
+	await get_tree().create_timer(3.0).timeout
+	print("seated %s frozen %s fox state %d" % [pl.seated, pl.frozen, _fox.state])
+	shot.call("up")
+
+
+## Test hook (--shot-drown): a swim with the pets, then a dive held too long:
+## the low-air view, passing out, the tow, waking on the bank, the shake.
+func _test_drown() -> void:
+	var pl := Game.player
+	pl._end_wake()
+	for c in [_fox, _otter]:
+		c.state = Companion.State.FOLLOWING
+		if c._zzz:
+			c._zzz.queue_free()
+		c.body.rotation.z = 0.0
+	var shot := func(tag: String):
+		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_%s.png" % tag))
+	await get_tree().create_timer(36.0).timeout  # let the opening lines play out
+	for c in [_fox, _otter]:
+		c.follow()
+	var deep := _deepest_point()
+	pl.global_position = Vector3(deep.x, Game.WATER_LEVEL - Player.FLOAT_DEPTH, deep.z)
+	var fwd := pl._aim_flat()
+	_fox.body.position = pl.global_position + fwd * 2.5 + fwd.cross(Vector3.UP) * 1.2
+	_otter.body.position = pl.global_position + fwd * 2.2 - fwd.cross(Vector3.UP) * 1.2
+	await get_tree().create_timer(4.0).timeout
+	shot.call("swim")
+	Input.action_press("swim_down")
+	await get_tree().create_timer(2.5).timeout
+	shot.call("dive")
+	pl.air = 0.4
+	await get_tree().create_timer(7.0).timeout
+	print("air %.2f under %s" % [pl.air, pl.head_under()])
+	shot.call("low_air")
+	await get_tree().create_timer(5.5).timeout
+	Input.action_release("swim_down")
+	print("knocked out %s" % pl.knocked_out)
+	await get_tree().create_timer(3.0).timeout
+	shot.call("out")
+	await get_tree().create_timer(4.0).timeout
+	shot.call("tow")
+	await get_tree().create_timer(4.5).timeout
+	shot.call("fading")
+	await get_tree().create_timer(6.0).timeout
+	shot.call("wake")
+	await get_tree().create_timer(4.0).timeout
+	shot.call("shake")
+	print("hero wet %.2f" % pl.wet)
+	print("on shore y %.2f ground %.2f, fox wet %.2f state %d" % [pl.global_position.y, Game.ground_at(pl.global_position.x, pl.global_position.z), _fox.wet, _fox.state])
+	await get_tree().create_timer(8.0).timeout
+	print("frozen %s, fox state %d" % [pl.frozen, _fox.state])
+	shot.call("after")
+
+
+## Test hook (--shot-birds): by day, a flock lands nearby and a crow circles;
+## then the hero walks at the flock and it scatters.
+func _test_birds() -> void:
+	var pl := Game.player
+	pl._end_wake()
+	_make_dawn()
+	Game.is_night = false
+	var shot := func(tag: String):
+		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_%s.png" % tag))
+	await get_tree().create_timer(5.0).timeout
+	var fwd := pl._aim_flat()
+	var spot := pl.global_position + fwd * 9.0
+	_birds.spawn_flock(pl.global_position, "cardinal", spot)
+	_birds.spawn_flock(pl.global_position, "bluebird", spot + fwd.cross(Vector3.UP) * 3.0)
+	_birds.spawn_soarer("crow", pl.global_position)
+	await get_tree().create_timer(6.0).timeout
+	shot.call("arriving")
+	await get_tree().create_timer(8.0).timeout
+	var grounded := _birds.get_children().filter(func(b): return b.mode == Bird.Mode.GROUND).size()
+	print("birds %d, on the ground %d" % [_birds.get_child_count(), grounded])
+	Bird.fearless = true
+	var perched: Array = _birds.get_children().filter(func(b): return b.mode == Bird.Mode.GROUND)
+	if not perched.is_empty():
+		var bird: Node3D = perched[0]
+		bird.global_position = pl.global_position - fwd * 1.6
+		pl._yaw += PI
+		bird.global_position.y = Game.ground_at(bird.global_position.x, bird.global_position.z)
+		pl._pitch = -0.45
+		pl.zoom = 0.0
+	await get_tree().create_timer(0.4).timeout
+	shot.call("ground")
+	pl.zoom = 3.4
+	Bird.fearless = false
+	pl._pitch = 0.5
+	await get_tree().create_timer(0.8).timeout
+	shot.call("sky")
+	pl._pitch = -0.12
+	pl.global_position = spot - fwd * 4.0
+	await get_tree().create_timer(0.7).timeout
+	shot.call("scatter")
+	await get_tree().create_timer(4.0).timeout
+	grounded = _birds.get_children().filter(func(b): return b.mode == Bird.Mode.GROUND).size()
+	print("after scare: birds %d, on the ground %d" % [_birds.get_child_count(), grounded])
+
+
+## Test hook (--shot-animals): all the forest animals in a row in front of the
+## hero, a close-up of the little ones, then the hero runs at them.
+func _test_animals() -> void:
+	var pl := Game.player
+	pl._end_wake()
+	_make_dawn()
+	Game.is_night = false
+	var shot := func(tag: String):
+		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_%s.png" % tag))
+	await get_tree().create_timer(5.0).timeout
+	Animal.fearless = true
+	pl._yaw += PI
+	await get_tree().create_timer(0.3).timeout
+	var fwd := pl._aim_flat()
+	pl.global_position += fwd * 6.0
+	pl.global_position.y = Game.ground_at(pl.global_position.x, pl.global_position.z) + 0.1
+	var right := fwd.cross(Vector3.UP)
+	var kinds := ["stag", "deer", "rabbit", "squirrel", "chipmunk", "skunk", "frog"]
+	for i in kinds.size():
+		var at: Vector3 = pl.global_position + fwd * 7.0 + right * (i - 3) * 1.6
+		_animals.spawn(pl.global_position, kinds[i], at)
+	for a in _animals.get_children():
+		a.rotation.y = atan2(fwd.x, fwd.z)  # all looking at the camera
+		a._timer = 30.0
+	pl._pitch = -0.2
+	await get_tree().create_timer(1.5).timeout
+	shot.call("lineup")
+	var home := pl.global_position
+	var all := _animals.get_children()
+	for a in all:
+		var near := 7.0 if a.kind in ["deer", "stag"] else 2.2
+		for b in all:
+			b.visible = b == a
+		var keep: Vector3 = a.global_position
+		var at := home + fwd * near
+		a.global_position = Vector3(at.x, Game.ground_at(at.x, at.z), at.z)
+		a.rotation.y = pl._yaw + PI / 2  # nose should point screen-left
+		a.set_process(false)
+		pl._pitch = -0.2 if near > 3.0 else -0.5
+		pl.zoom = 0.0
+		pl.visible = false
+		await get_tree().create_timer(0.5).timeout
+		shot.call("k_" + a.kind)
+		a.global_position = keep
+		a.set_process(true)
+	for b in all:
+		b.visible = true
+	pl.visible = true
+	pl.global_position = home
+	for a in _animals.get_children():
+		print("%s mode %d at %.1f m" % [a.kind, a.mode, a.global_position.distance_to(pl.global_position)])
+	pl.zoom = 3.4
+	pl._pitch = -0.15
+	# Back in a row ahead on dry ground, grazing; then the hero walks straight at them.
+	var found := false
+	for ring in [0.0, 10.0, 20.0, 30.0]:
+		for j in 12:
+			var c: Vector3 = home + Vector3.FORWARD.rotated(Vector3.UP, TAU * j / 12.0) * ring
+			for k in 24:
+				var d := Vector3.FORWARD.rotated(Vector3.UP, TAU * k / 24.0)
+				var dry := true
+				for t in range(-8, 18, 2):
+					var q: Vector3 = c + d * t
+					if Game.ground_at(q.x, q.z) < Game.WATER_LEVEL + 0.4:
+						dry = false
+				if dry and not found:
+					found = true
+					home = Vector3(c.x, Game.ground_at(c.x, c.z), c.z)
+					fwd = d
+					right = fwd.cross(Vector3.UP)
+					pl._yaw = atan2(-d.x, -d.z)
+	print("dry spot found: %s" % found)
+	var kinds_left := _animals.get_children()
+	for i in kinds_left.size():
+		var a: Animal = kinds_left[i]
+		var at: Vector3 = home + fwd * (12.0 if a.kind in ["deer", "stag"] else 9.0) + right * (i - kinds_left.size() / 2.0) * 1.4
+		a.global_position = Vector3(at.x, Game.ground_at(at.x, at.z), at.z)
+		a._idle()
+	pl.global_position = home - fwd * 6.0
+	await get_tree().create_timer(0.6).timeout
+	Animal.fearless = false
+	shot.call("grazing")
+	var walked := 0.0
+	while walked < 5.0:
+		await get_tree().process_frame
+		var step := 3.0 * get_process_delta_time()
+		walked += step
+		pl.global_position += fwd * step
+		pl.velocity = fwd * 3.0
+	shot.call("alert")
+	await get_tree().create_timer(1.2).timeout
+	shot.call("scatter")
+	await get_tree().create_timer(2.5).timeout
+	shot.call("after")
+	for a in _animals.get_children():
+		print("after: %s mode %d at %.1f m, up %.1f" % [a.kind, a.mode, a.global_position.distance_to(pl.global_position), a._climb])
+
+
+## Test hook (--shot-save): play a little (wake the pets, pick things up,
+## build a fire and a lean-to, wander off), save, load it back into a fresh
+## world, and check it all came back.
+func _test_save() -> void:
+	var shot := func(tag: String):
+		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_%s.png" % tag))
+	var pl := Game.player
+	if Game.shot_save_loaded:
+		await get_tree().create_timer(4.0).timeout
+		shot.call("loaded")
+		print("loaded: sticks %d stones %d, known %s, quests %s, warmth %.0f" % [Game.inventory.get("Sticks", 0), Game.inventory.get("Stones", 0), Game.known, Game.quests.map(func(q): return q.id), Game.warmth])
+		print("loaded: hero at %s, fires %d, lean-tos %d, fox state %d, night %s" % [pl.global_position.round(), get_tree().get_nodes_in_group("campfires").size(), get_tree().get_nodes_in_group("shelters").size(), _fox.state, Game.is_night])
+		get_tree().quit()
+		return
+	pl._end_wake()
+	await get_tree().create_timer(30.0).timeout  # through the opening lines
+	for c in [_fox, _otter]:
+		c.follow()
+	var fwd := pl._aim_flat()
+	Game.known.append("campfire")
+	Game.add_item("Sticks", 7)
+	Game.add_item("Stones", 4)
+	pl._build("campfire", pl.global_position + fwd * 3.0, 0.0)
+	Game.add_item("Sticks", 6)
+	Game.add_item("Ferns", 5)
+	pl._build("lean_to", pl.global_position + fwd.rotated(Vector3.UP, 1.2) * 4.0, pl._yaw)
+	Game.warmth = 63.0
+	await get_tree().create_timer(12.0).timeout  # the fire's done; settle starts
+	pl.global_position += fwd.rotated(Vector3.UP, -1.0) * 5.0
+	await get_tree().create_timer(1.0).timeout
+	print("can save: %s" % can_save())
+	print("saved: %s" % save_game())
+	print("before: sticks %d stones %d, known %s, quests %s, warmth %.0f" % [Game.inventory.get("Sticks", 0), Game.inventory.get("Stones", 0), Game.known, Game.quests.map(func(q): return q.id), Game.warmth])
+	print("before: hero at %s" % pl.global_position.round())
+	shot.call("saved")
+	# Muddle things up, then load into a fresh world.
+	Game.inventory.clear()
+	Game.warmth = 10.0
+	SaveGame.pending = SaveGame.read()
+	Game.shot_save_loaded = true
+	get_tree().change_scene_to_file("res://scenes/main.tscn")
+
+
+## Test hook (--shot-map): a walk through the woods, a campfire, the map idea,
+## making it, then the little map in the corner and the big one unfolded.
+func _test_map() -> void:
+	var shot := func(tag: String):
+		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.replace(".png", "_%s.png" % tag))
+	var pl := Game.player
+	pl._end_wake()
+	await get_tree().create_timer(36.0).timeout  # through the opening lines
+	for c in [_fox, _otter]:
+		c.follow()
+	var fwd := pl._aim_flat()
+	pl._build("campfire", pl.global_position + fwd * 3.0, 0.0)
+	# A wander: out toward the Sanctum and round, marking what he sees.
+	var start := pl.global_position
+	for k in 40:
+		var a := k / 40.0 * TAU
+		var spot := start.lerp(Vector3.ZERO, 0.5 * sin(a * 0.5)) + Vector3(cos(a) * 25.0, 0, sin(a) * 25.0)
+		Game.explore_at(Vector3(spot.x, 0, spot.z))
+	_suggest_map()
+	await get_tree().create_timer(20.0).timeout
+	print("map known %s, quest %s" % [Game.known.has("map"), not Game.quest("map").is_empty()])
+	Game.add_item("Charcoal", 1)
+	Game.add_item("Birch bark", 2)
+	pl.make("map")
+	print("has map %s" % Game.has_map())
+	await get_tree().create_timer(1.0).timeout
+	shot.call("mini")
+	_hud.open_map()
+	print("frozen while open %s" % pl.frozen)
+	await get_tree().create_timer(0.8).timeout
+	shot.call("full")
+	_hud.close_map()
+	await get_tree().create_timer(0.6).timeout
+	print("frozen after close %s, map quest left %s" % [pl.frozen, not Game.quest("map").is_empty()])

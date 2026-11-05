@@ -23,8 +23,11 @@ func _rebuild() -> void:
 	for q in Game.quests:
 		if q.main:
 			_line(q.title, 21, GOLD)
+			# What's done, and just the next thing to do (one step at a time).
 			for step in q.steps:
 				_line(("✓  " if step.done else "•  ") + step.text, 17, DIM if step.done else CREAM)
+				if not step.done:
+					break
 	var sides := Game.quests.filter(func(q): return not q.main)
 	if not sides.is_empty():
 		_line("", 8, DIM)

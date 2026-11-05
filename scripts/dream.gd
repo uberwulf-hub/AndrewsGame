@@ -9,7 +9,7 @@ extends Node3D
 
 const NEXT_SCENE := "res://scenes/main.tscn"
 const MEADOW := Vector3(0, 0, 0)
-const CLIFF := Vector3(160, 0, 0)
+const BEACH := Vector3(160, 0, 0)
 const HOME := Vector3(700, 0, 0)  # far enough that its hills never block the cliff's sea view
 const HOME2 := Vector3(1200, 0, 0)
 const HOME3 := Vector3(1700, 0, 0)
@@ -22,6 +22,7 @@ const MOODS := {
 	"golden": [Color(0.45, 0.58, 0.88), Color(1.0, 0.82, 0.6), Color(1.0, 0.82, 0.55), 1.5, Color(1.0, 0.85, 0.68), 0.005, Color(1.05, 0.97, 0.85), 1.15, 0.32],
 	"gloom": [Color(0.28, 0.32, 0.42), Color(0.5, 0.53, 0.6), Color(0.65, 0.7, 0.85), 0.45, Color(0.48, 0.52, 0.6), 0.02, Color(0.82, 0.9, 1.0), 0.55, 0.15],
 	"dusk": [Color(0.3, 0.32, 0.55), Color(0.86, 0.64, 0.62), Color(0.88, 0.76, 0.9), 0.65, Color(0.62, 0.56, 0.72), 0.012, Color(0.97, 0.94, 1.03), 0.8, 0.32],
+	"moon": [Color(0.03, 0.05, 0.13), Color(0.12, 0.17, 0.3), Color(0.72, 0.8, 1.0), 0.75, Color(0.1, 0.14, 0.24), 0.006, Color(0.9, 0.95, 1.08), 0.95, 0.22],
 	"white": [Color(1, 1, 1), Color(1.0, 0.97, 0.92), Color(1.0, 0.98, 0.94), 2.2, Color(1.0, 0.97, 0.92), 0.018, Color(1.1, 1.08, 1.02), 0.6, 0.5],
 }
 
@@ -58,7 +59,7 @@ func _ready() -> void:
 	_build_environment()
 	_build_ui()
 	_build_meadow()
-	_build_cliff()
+	_build_beach()
 	_build_garden()
 	_build_home()
 	_build_home2()
@@ -128,21 +129,38 @@ func _meeting() -> void:
 	await _wait(12.0)
 
 
+## Coronado, at night: they run down the moonlit beach below their hotel,
+## laughing, all the way to the old ship that ran aground in the surf.
 func _adventures() -> void:
 	await _cut(func():
-		_set_sun(Vector3(-8, 90, 0))
-		_mood("sunset", 0.0)
+		_moonlight()
+		_mood("moon", 0.0)
 		_hero.raise_arms(0, 0, 0.01)
 		_mate.raise_arms(0, 0, 0.01)
-		_hero.position = CLIFF + Vector3(-10, 0, -0.6)
-		_mate.position = CLIFF + Vector3(-10, 0, 0.6)
-		_shot(CLIFF + Vector3(-17, 3.0, 5.0), CLIFF + Vector3(4, 2.4, 3.5), CLIFF + Vector3(10, 1.0, 0), CLIFF + Vector3(40, -2.0, 0), 11.6)
+		_place(_hero, BEACH + Vector3(5.4, 0.1, 18), PI)
+		_place(_mate, BEACH + Vector3(6.6, 0.1, 18.6), PI)
+		_shot(BEACH + Vector3(-3, 2.0, 26), BEACH + Vector3(2.5, 2.6, 6), BEACH + Vector3(6, 1.0, 12), BEACH + Vector3(13, 3.0, -14), 11.6)
 	)
-	_hero.walk_to(CLIFF + Vector3(12.5, 0, -0.5), 5.5)
-	_mate.walk_to(CLIFF + Vector3(12.5, 0, 0.5), 5.5)
+	# A run down the hard sand, then up to the bow of the wreck.
+	_hero.walk_to(BEACH + Vector3(8.4, 0.1, 4), 2.7)
+	_mate.walk_to(BEACH + Vector3(9.6, 0.1, 4.8), 2.7)
+	_at(2.7, func():
+		_hero.walk_to(BEACH + Vector3(10.2, 0.1, -2.6), 2.6)
+		_mate.walk_to(BEACH + Vector3(11.4, 0.1, -1.8), 2.6))
 	_at(4.0, _lanterns)
-	_at(5.8, func(): _hero.raise_arms(0.0, 1.9))
+	_at(5.6, func():
+		_hero.face(BEACH + Vector3(12, 3, -8))
+		_mate.face(BEACH + Vector3(12, 3, -8))
+		_hero.raise_arms(0.0, 1.9))
 	await _wait(11.65)
+
+
+## The moon over the sea lights the scene: cool, low and from the water side.
+func _moonlight() -> void:
+	# From the moon's side but higher than the moon itself, so the wreck's
+	# shadow doesn't swallow the beach.
+	var from_dir := Vector3(MOON_DIR.x * 0.5, 0.85, MOON_DIR.z * 0.5).normalized()
+	_sun.global_transform = Transform3D(Basis.looking_at(-from_dir), Vector3.ZERO)
 
 
 func _family() -> void:
@@ -407,7 +425,7 @@ func _lanterns() -> void:
 	var glow := MeshKit.glow(Color(1.0, 0.65, 0.3), 5.0)
 	for k in 18:
 		var lantern := MeshKit.part(self, MeshKit.sphere(0.18, 0.3, 6, 3), glow,
-			CLIFF + Vector3(randf_range(14, 40), randf_range(-24, -10), randf_range(-16, 16)))
+			BEACH + Vector3(randf_range(24, 70), randf_range(-1, 1), randf_range(-40, 0)))
 		var tw := lantern.create_tween()
 		tw.tween_property(lantern, "position", lantern.position + Vector3(randf_range(-3, 3), randf_range(24, 34), randf_range(-3, 3)), randf_range(8.0, 11.0))
 
@@ -797,25 +815,146 @@ func _great_tree(at: Vector3) -> void:
 		MeshKit.part(self, MeshKit.sphere(0.06), firefly, at + Vector3(randf_range(-5, 5), randf_range(6, 12), randf_range(-4, 5)))
 
 
-func _build_cliff() -> void:
-	var rock := MeshKit.mat(Color(0.5, 0.5, 0.44))
-	MeshKit.part(self, MeshKit.box(Vector3(46, 40, 50)), rock, CLIFF + Vector3(-8, -20, 0))
-	MeshKit.part(self, MeshKit.box(Vector3(46, 0.2, 50)), MeshKit.mat(Color(0.42, 0.62, 0.3)), CLIFF + Vector3(-8, 0.0, 0))
-	_flowers(CLIFF + Vector3(-6, 0.1, 0), 16.0, 700)
+## Coronado at night: a wide moonlit beach below their old Victorian beach
+## hotel, North Island's lights and a carrier's silhouette across the water,
+## and a rusty ship that ran aground in the surf. Shore runs along Z with the
+## sea toward +X; sand top is at y = 0.1 so feet stand on it.
+const MOON_DIR := Vector3(0.55, 0.32, -0.77)  # toward the moon, from the beach
+
+func _build_beach() -> void:
+	var sand := MeshKit.mat(Color(0.4, 0.38, 0.34), 1.0)
+	var wet := MeshKit.mat(Color(0.36, 0.34, 0.31), 0.35)
+	MeshKit.part(self, MeshKit.box(Vector3(120, 2, 260)), sand, BEACH + Vector3(-48, -0.9, 0))
+	# Packed wet sand sloping down under the surf.
+	var slope := MeshKit.part(self, MeshKit.box(Vector3(40, 0.4, 260)), wet, BEACH + Vector3(31, -1.6, 0))
+	slope.rotation.z = -0.085
 	var water := ShaderMaterial.new()
 	water.shader = load("res://shaders/water.gdshader")
 	water.set_shader_parameter("ripple_a", _ripples(11, 0.02))
 	water.set_shader_parameter("ripple_b", _ripples(23, 0.035))
-	water.set_shader_parameter("wave_height", 0.6)
+	water.set_shader_parameter("wave_height", 0.18)
+	water.set_shader_parameter("shallow_color", Color(0.1, 0.2, 0.28))
+	water.set_shader_parameter("deep_color", Color(0.01, 0.04, 0.09))
 	var sea := PlaneMesh.new()
-	sea.size = Vector2(700, 700)
+	sea.size = Vector2(900, 900)
 	sea.subdivide_width = 120
 	sea.subdivide_depth = 120
-	MeshKit.part(self, sea, water, CLIFF + Vector3(150, -26, 0))
+	MeshKit.part(self, sea, water, BEACH + Vector3(470, -0.3, 0))
+	# The moon, its silver path across the water, and the stars.
+	var moon_at := BEACH + MOON_DIR * 380.0
+	MeshKit.part(self, MeshKit.sphere(11.0, 22.0, 16, 10), MeshKit.glow(Color(0.95, 0.96, 1.0), 4.0), moon_at)
+	var path_mat := MeshKit.glow(Color(0.75, 0.82, 1.0, 0.05), 0.7, true)
+	path_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	var flat_dir := Vector3(MOON_DIR.x, 0, MOON_DIR.z).normalized()
+	for k in 3:
+		# Starts out past the surf and runs off toward the moon.
+		var strip := MeshKit.part(self, MeshKit.box(Vector3(3.0 + k * 4.0, 0.01, 260)), path_mat, BEACH + Vector3(30, -0.2 + k * 0.005, -6) + flat_dir * 132.0)
+		strip.rotation.y = atan2(flat_dir.x, flat_dir.z)
+	var star_mm := _multimesh(MeshKit.sphere(0.6, -1.0, 4, 2), 380, false)
+	for i in star_mm.instance_count:
+		var d := Vector3(randf_range(-1, 1), randf_range(0.08, 1.0), randf_range(-1, 1)).normalized()
+		star_mm.set_instance_transform(i, Transform3D(Basis.from_scale(Vector3.ONE * randf_range(0.5, 1.4)), BEACH + d * 520.0))
+	var stars := MultiMeshInstance3D.new()
+	stars.multimesh = star_mm
+	stars.material_override = MeshKit.glow(Color(0.9, 0.93, 1.0), 2.5)
+	add_child(stars)
+	_beach_hotel(BEACH + Vector3(-34, 0.1, -66))
+	_north_island()
+	_shipwreck(BEACH + Vector3(17, -0.7, -20))
+	# A few dark palms along the top of the beach.
+	for z in [-60.0, -44.0, -12.0, 6.0, 26.0]:
+		_palm(BEACH + Vector3(-22 + randf_range(-3, 3), 0.1, z), randf_range(8.0, 11.0))
+
+
+## A big white Victorian beach hotel: long wings with rows of warm windows,
+## red roofs, and a tall red conical turret in the middle.
+func _beach_hotel(at: Vector3) -> void:
+	var wall := MeshKit.mat(Color(0.88, 0.86, 0.8))
+	var roof := MeshKit.mat(Color(0.62, 0.16, 0.12), 0.7)
+	var lit := MeshKit.glow(Color(1.0, 0.78, 0.45), 2.2)
+	# [center offset, length, runs along X?]
+	for wing in [[Vector3(0, 0, 0), 58.0, true], [Vector3(-29, 0, 20), 34.0, false]]:
+		var base: Vector3 = at + wing[0]
+		var length: float = wing[1]
+		var along_x: bool = wing[2]
+		MeshKit.part(self, MeshKit.box(Vector3(length, 13, 12) if along_x else Vector3(12, 13, length)), wall, base + Vector3(0, 6.5, 0))
+		# A hipped red roof: a squashed four-sided pyramid stretched along the wing.
+		var r := MeshKit.part(self, MeshKit.cyl(0.0, 8.5, 5.5, 4), roof, base + Vector3(0, 15.75, 0), Vector3(0, PI / 4, 0))
+		r.scale = Vector3(length / 12.0, 1, 1) if along_x else Vector3(1, 1, length / 12.0)
+		for floor_i in 4:
+			for k in int(length / 3.2):
+				if randf() < 0.2:
+					continue  # some rooms are dark
+				var a := -length * 0.5 + 1.8 + k * 3.2
+				var y := 1.8 + floor_i * 3.0
+				if along_x:
+					MeshKit.part(self, MeshKit.box(Vector3(1.1, 1.5, 0.05)), lit, base + Vector3(a, y, 6.05))
+				else:
+					MeshKit.part(self, MeshKit.box(Vector3(0.05, 1.5, 1.1)), lit, base + Vector3(6.05, y, a))
+	# The turret over the main entrance.
+	MeshKit.part(self, MeshKit.cyl(4.2, 4.2, 18, 12), wall, at + Vector3(4, 9, 3))
+	MeshKit.part(self, MeshKit.cyl(0.0, 5.2, 9, 12), roof, at + Vector3(4, 22.5, 3))
+	MeshKit.part(self, MeshKit.cyl(0.08, 0.08, 3, 4), MeshKit.mat(Color(0.2, 0.2, 0.2)), at + Vector3(4, 28.5, 3))
 	for k in 6:
-		var r := randf_range(3.0, 7.0)
-		MeshKit.part(self, MeshKit.sphere(r, r * randf_range(2.5, 4.0), 7, 5), rock,
-			CLIFF + Vector3(randf_range(40, 120), -26, randf_range(-60, 60)))
+		var a := TAU * k / 6.0
+		MeshKit.part(self, MeshKit.box(Vector3(0.9, 1.5, 0.9)), lit, at + Vector3(4 + cos(a) * 4.15, 14.0, 3 + sin(a) * 4.15))
+	var glow := OmniLight3D.new()
+	glow.light_color = Color(1.0, 0.75, 0.45)
+	glow.light_energy = 2.0
+	glow.omni_range = 30.0
+	glow.position = at + Vector3(0, 6, 12)
+	add_child(glow)
+
+
+## Across the bay: the long low shore of North Island, a line of base lights,
+## and a carrier tied up at the pier with its red lights on.
+func _north_island() -> void:
+	var dark := MeshKit.mat(Color(0.05, 0.06, 0.08))
+	var land := BEACH + Vector3(90, -0.3, -330)
+	MeshKit.part(self, MeshKit.box(Vector3(420, 3, 40)), dark, land)
+	var light_mm := _multimesh(MeshKit.sphere(0.5, -1.0, 4, 2), 70, false)
+	for i in light_mm.instance_count:
+		light_mm.set_instance_transform(i, Transform3D(Basis(), land + Vector3(randf_range(-200, 200), randf_range(1.8, 6.0), randf_range(-12, 18))))
+	var lights := MultiMeshInstance3D.new()
+	lights.multimesh = light_mm
+	lights.material_override = MeshKit.glow(Color(1.0, 0.8, 0.5), 5.0)
+	add_child(lights)
+	var gray := MeshKit.mat(Color(0.16, 0.17, 0.2))
+	var carrier := BEACH + Vector3(140, 1.5, -290)
+	MeshKit.part(self, MeshKit.box(Vector3(100, 9, 18)), gray, carrier)
+	MeshKit.part(self, MeshKit.box(Vector3(14, 12, 5)), gray, carrier + Vector3(10, 10.5, 6))
+	MeshKit.part(self, MeshKit.cyl(0.3, 0.3, 8, 4), gray, carrier + Vector3(10, 20, 6))
+	for x in [-40.0, -10.0, 25.0, 45.0]:
+		MeshKit.part(self, MeshKit.sphere(0.5, -1.0, 4, 2), MeshKit.glow(Color(1.0, 0.25, 0.2), 6.0), carrier + Vector3(x, 4.8, 0))
+
+
+## A rusty little freighter that ran aground: hull half buried in the sand and
+## leaning seaward, bow pointing up the beach toward where they run in.
+func _shipwreck(at: Vector3) -> void:
+	var rust := MeshKit.mat(Color(0.3, 0.16, 0.1), 0.95, 0.2)
+	var rust2 := MeshKit.mat(Color(0.42, 0.24, 0.14), 0.95, 0.2)
+	var dark := MeshKit.mat(Color(0.04, 0.04, 0.05))
+	var ship := Node3D.new()
+	ship.position = at
+	ship.rotation = Vector3(0.05, -0.35, -0.16)
+	add_child(ship)
+	MeshKit.part(ship, MeshKit.box(Vector3(6, 4.5, 22)), rust, Vector3(0, 1.6, 0))
+	# The bow: a three-sided wedge narrowing to a point toward +Z.
+	MeshKit.part(ship, MeshKit.cyl(0.0, 3.5, 6, 3), rust, Vector3(0, 1.6, 13.4), Vector3(PI / 2, PI / 6, 0))
+	MeshKit.part(ship, MeshKit.box(Vector3(6.2, 0.35, 22)), rust2, Vector3(0, 3.95, 0))  # deck edge
+	MeshKit.part(ship, MeshKit.box(Vector3(4.6, 3.2, 5.0)), rust2, Vector3(0, 5.6, -6.5))  # cabin
+	for k in 4:
+		MeshKit.part(ship, MeshKit.box(Vector3(0.8, 0.7, 0.05)), dark, Vector3(-1.6 + k * 1.05, 6.2, -3.97))
+	MeshKit.part(ship, MeshKit.cyl(0.7, 0.8, 3.4, 8), rust, Vector3(0, 8.6, -8.0), Vector3(0.12, 0, 0.1))  # stack
+	MeshKit.part(ship, MeshKit.cyl(0.12, 0.15, 9, 5), rust2, Vector3(0, 8.0, 4.0), Vector3(0, 0, 0.25))  # bent mast
+	# Rust streaks and a hole in the side, and sand drifted up around the hull.
+	for k in 5:
+		MeshKit.part(ship, MeshKit.box(Vector3(0.05, randf_range(1.5, 3.0), 0.5)), dark, Vector3(-3.03, 2.2, randf_range(-9, 9)))
+	MeshKit.part(ship, MeshKit.sphere(1.1, 1.6, 8, 5), dark, Vector3(-3.0, 1.4, -2.5))
+	var sand := MeshKit.mat(Color(0.4, 0.38, 0.34), 1.0)
+	for k in 6:
+		var dune := MeshKit.part(self, MeshKit.sphere(3.0, 1.6, 8, 4), sand, at + Vector3(randf_range(-6, 0), 0.4, randf_range(-12, 12)))
+		dune.scale = Vector3(1.6, 1.0, 1.4)
 
 
 ## The family's first home: a two-story desert stucco house with a tile roof,

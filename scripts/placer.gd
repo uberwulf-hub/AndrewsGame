@@ -9,6 +9,8 @@ extends Node3D
 const SIZES := {
 	"campfire": {"distance": 2.4, "radius": 0.7, "fire_gap": 3.0},
 	"lean_to": {"distance": 3.2, "radius": 1.1, "fire_gap": 1.6},
+	"torch_post": {"distance": 1.6, "radius": 0.25, "fire_gap": 1.2, "shelter_gap": 1.0},
+	"rain_catcher": {"distance": 1.8, "radius": 0.45, "fire_gap": 1.8, "shelter_gap": 1.6},
 }
 
 var id := ""
@@ -33,6 +35,10 @@ func _ready() -> void:
 			_ghost = Campfire.ghost(_blue)
 		"lean_to":
 			_ghost = Shelter.ghost(_blue)
+		"torch_post":
+			_ghost = TorchPost.ghost(_blue)
+		"rain_catcher":
+			_ghost = RainCatcher.ghost(_blue)
 	add_child(_ghost)
 	for n in _ghost.find_children("*", "MeshInstance3D", true, false):
 		_parts.append(n)
@@ -61,11 +67,15 @@ func _fits(spot: Vector3) -> bool:
 		if absf(Game.ground_at(spot.x + cos(a) * radius, spot.z + sin(a) * radius) - spot.y) > 0.3:
 			return false
 	for s in get_tree().get_nodes_in_group("shelters"):
-		if (s as Node3D).global_position.distance_to(spot) < 3.0:
+		if (s as Node3D).global_position.distance_to(spot) < SIZES[id].get("shelter_gap", 3.0):
 			return false
 	for f in get_tree().get_nodes_in_group("campfires"):
 		if (f as Node3D).global_position.distance_to(spot) < SIZES[id].fire_gap:
 			return false
+	for group in ["torches", "usables"]:
+		for n in get_tree().get_nodes_in_group(group):
+			if not n is Campfire and (n as Node3D).global_position.distance_to(spot) < radius + 0.7:
+				return false
 	# Anything solid in the footprint, a little above the ground so the ground
 	# itself doesn't count.
 	var probe := SphereShape3D.new()

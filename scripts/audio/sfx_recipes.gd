@@ -25,10 +25,11 @@ const SOUNDS := {
 	# Water
 	"splash_in": [3, 1.0], "splash_out": [3, 0.6], "swim_stroke": [4, 0.7], "footstep_water": [5, 0.35],
 	"bubbles": [4, 1.0], "loop_underwater": [1, 11.0],
+	"heartbeat": [2, 0.6], "gasp": [3, 1.0], "shake_off": [2, 0.9],
 	# Story
 	"thunder": [3, 4.0], "door_slam": [1, 1.2], "loop_rain": [1, 9.0],
 	# World
-	"bird_chirp": [6, 1.4],
+	"bird_chirp": [6, 1.4], "crow_caw": [3, 0.8], "gull_call": [3, 1.0], "owl_hoot": [2, 1.8], "wing_flap": [3, 0.6],
 	"loop_wind_soft": [1, 13.0], "loop_wind_strong": [1, 13.0], "loop_water": [1, 13.0],
 	"loop_crystal": [1, 9.0], "loop_fire": [1, 7.0], "loop_sentinel": [1, 4.5],
 }
@@ -53,48 +54,42 @@ func _p(s: SfxSynth, spread := 0.05) -> float:
 	return s.rng.randf_range(1.0 - spread, 1.0 + spread)
 
 
-# --- Weapons -----------------------------------------------------------------
+# --- Dream tools -------------------------------------------------------------
+# Soft sounds for soft tools: a fwip of light, a sling's twang, a breath through
+# a horn, a firefly's chirp, a bowstring's thrum.
 
 func shot_rifle(s: SfxSynth, _v: int) -> void:
 	var p := _p(s)
-	s.noise(0.0, 0.3, 0.9, 24.0, 7000.0, 1200.0, 150.0)
-	s.tone(0.0, 0.2, 190.0 * p, 55.0, 0.8, 26.0, Q)
-	s.tone(0.0, 0.03, 2400.0 * p, 900.0, 0.25, 90.0, W)
-	s.noise(0.03, 0.45, 0.16, 6.0, 900.0, 300.0)
+	s.noise(0.0, 0.25, 0.4, 12.0, 3000.0, 1200.0, 300.0, 0.01)
+	s.tone(0.0, 0.12, 900.0 * p, 1500.0, 0.15, 18.0, S, 0.005)
+	s.bell(0.0, 1760.0 * p, 0.12, 12.0, 0.4)
 
 
 func shot_cannon(s: SfxSynth, _v: int) -> void:
 	var p := _p(s)
-	s.noise(0.0, 0.5, 1.0, 12.0, 5000.0, 700.0, 60.0)
-	s.tone(0.0, 0.45, 120.0 * p, 38.0, 1.0, 9.0, Q)
-	s.tone(0.0, 0.04, 1600.0 * p, 600.0, 0.3, 70.0, W)
-	s.noise(0.05, 0.85, 0.3, 3.5, 700.0, 200.0)
+	s.tone(0.0, 0.35, 220.0 * p, 180.0, 0.5, 10.0, T)
+	s.tone(0.0, 0.25, 440.0 * p, 360.0, 0.2, 14.0, S)
+	s.noise(0.03, 0.45, 0.35, 6.0, 2500.0, 800.0, 200.0, 0.02)
 
 
 func shot_scatter(s: SfxSynth, _v: int) -> void:
 	var p := _p(s)
-	s.noise(0.0, 0.5, 1.0, 10.0, 9000.0, 900.0, 80.0)
-	s.tone(0.0, 0.4, 95.0 * p, 34.0, 0.9, 9.0, Q)
-	s.grains(0.02, 0.2, 18, 0.25, 6000.0, 0.006, 0.8)
-	s.noise(0.06, 0.7, 0.22, 4.0, 800.0, 250.0)
-	s.noise(0.32, 0.12, 0.2, 30.0, 3000.0, 1500.0, 500.0)
-	s.tone(0.32, 0.08, 900.0, 500.0, 0.12, 40.0, Q)
+	s.tone(0.0, 0.55, 180.0 * p, 160.0, 0.35, 5.0, T, 0.03)
+	s.noise(0.0, 0.55, 0.4, 5.0, 1800.0, 900.0, 150.0, 0.02)
+	s.grains(0.05, 0.3, 14, 0.15, 5000.0, 0.004, 0.8)
 
 
 func shot_smg(s: SfxSynth, _v: int) -> void:
-	var p := _p(s, 0.08)
-	s.noise(0.0, 0.16, 0.8, 40.0, 8000.0, 2500.0, 300.0)
-	s.tone(0.0, 0.1, 280.0 * p, 90.0, 0.6, 45.0, Q)
-	s.tone(0.0, 0.02, 3200.0 * p, 1400.0, 0.2, 140.0, W)
+	var p := _p(s, 0.12)
+	s.tone(0.0, 0.08, 2200.0 * p, 3000.0, 0.2, 40.0, S)
+	s.noise(0.0, 0.1, 0.15, 30.0, 6000.0, 3000.0, 1500.0, 0.005)
 
 
 func shot_lance(s: SfxSynth, _v: int) -> void:
 	var p := _p(s)
-	s.tone(0.0, 0.25, 600.0 * p, 2600.0, 0.25, 6.0, W, 0.02)
-	s.tone(0.18, 0.9, 1800.0 * p, 160.0, 0.45, 5.0, Q)
-	s.noise(0.18, 0.8, 0.9, 7.0, 6000.0, 600.0, 100.0)
-	s.tone(0.18, 0.9, 75.0, 28.0, 0.9, 4.0, S)
-	s.bell(0.18, 1320.0 * p, 0.12, 4.0, 1.0)
+	s.tone(0.0, 0.7, 147.0 * p, 140.0, 0.5, 6.0, T)
+	s.noise(0.0, 0.35, 0.5, 12.0, 4000.0, 1200.0, 300.0, 0.005)
+	s.bell(0.02, 1174.0 * p, 0.15, 4.0, 1.2)
 
 
 func elem_fire(s: SfxSynth, _v: int) -> void:
@@ -117,22 +112,20 @@ func elem_frost(s: SfxSynth, _v: int) -> void:
 
 
 func dry_fire(s: SfxSynth, _v: int) -> void:
-	s.noise(0.0, 0.03, 0.8, 120.0, 6000.0, 3000.0, 1500.0)
-	s.tone(0.0, 0.05, 1800.0 * _p(s), 1200.0, 0.3, 80.0, Q)
+	# Out of light: a soft wooden tick.
+	s.tone(0.0, 0.06, 1400.0 * _p(s), 1200.0, 0.2, 60.0, S)
+	s.noise(0.0, 0.03, 0.2, 100.0, 3000.0, 2000.0, 800.0)
 
 
 func reload_out(s: SfxSynth, _v: int) -> void:
-	s.noise(0.0, 0.05, 0.7, 70.0, 7000.0, 3000.0, 1000.0)
-	s.tone(0.0, 0.06, 1100.0 * _p(s), 900.0, 0.35, 60.0, T)
-	s.noise(0.08, 0.25, 0.3, 10.0, 1800.0, 3500.0, 600.0, 0.05)
+	# A rustle, like reaching into a pouch.
+	s.noise(0.0, 0.35, 0.4, 8.0, 2500.0, 2000.0, 400.0, 0.03)
 
 
 func reload_in(s: SfxSynth, _v: int) -> void:
-	s.noise(0.0, 0.06, 0.9, 60.0, 5000.0, 2000.0, 400.0)
-	s.tone(0.0, 0.08, 700.0 * _p(s), 500.0, 0.4, 50.0, T)
-	s.noise(0.18, 0.05, 0.8, 80.0, 8000.0, 4000.0, 1500.0)
-	s.tone(0.18, 0.05, 2200.0, 1800.0, 0.25, 90.0, Q)
-	s.tone(0.22, 0.35, 500.0, 1500.0, 0.12, 6.0, S, 0.05)
+	# Filled back up: a rustle and a little chime.
+	s.noise(0.0, 0.2, 0.3, 10.0, 2500.0, 1800.0, 400.0, 0.02)
+	s.bell(0.15, 1318.5 * _p(s, 0.02), 0.15, 6.0, 0.4)
 
 
 func hit_marker(s: SfxSynth, _v: int) -> void:
@@ -208,9 +201,9 @@ func dash(s: SfxSynth, _v: int) -> void:
 
 
 func nova(s: SfxSynth, _v: int) -> void:
-	s.tone(0.0, 1.0, 95.0, 36.0, 1.0, 4.0, S, 0.01)
-	s.noise(0.0, 1.2, 0.8, 3.5, 2500.0, 300.0, 40.0, 0.01)
-	s.tone(0.0, 0.8, 400.0, 1600.0, 0.15, 4.0, W, 0.02)
+	# Bloom: a soft rush of air and petals, and rising bells.
+	s.tone(0.0, 1.0, 110.0, 90.0, 0.5, 3.0, S, 0.05)
+	s.noise(0.0, 1.2, 0.5, 3.0, 1800.0, 600.0, 80.0, 0.05)
 	for k in 4:
 		s.bell(0.05 + k * 0.07, [587.0, 880.0, 1174.0, 1760.0][k], 0.14, 3.0, 1.5)
 
@@ -395,6 +388,29 @@ func bubbles(s: SfxSynth, _v: int) -> void:
 		s.tone(s.rng.randf() * 0.8, 0.09, f, f * 2.2, 0.35 * s.rng.randf_range(0.5, 1.0), 30.0, S, 0.003)
 
 
+## Lub-dub: two soft low thumps, the second a little higher and quieter.
+func heartbeat(s: SfxSynth, _v: int) -> void:
+	var p := _p(s, 0.03)
+	s.tone(0.0, 0.16, 62.0 * p, 38.0, 1.0, 20.0, S, 0.006)
+	s.noise(0.0, 0.1, 0.25, 30.0, 180.0, 120.0)
+	s.tone(0.24, 0.14, 74.0 * p, 44.0, 0.7, 24.0, S, 0.006)
+	s.noise(0.24, 0.08, 0.18, 34.0, 200.0, 140.0)
+
+
+## Breaking the surface: a big breath in, then a shaky breath out.
+func gasp(s: SfxSynth, _v: int) -> void:
+	var p := _p(s, 0.1)
+	s.noise(0.0, 0.5, 0.7, 1.5, 1200.0 * p, 3500.0 * p, 500.0, 0.12)
+	s.noise(0.6, 0.35, 0.3, 5.0, 900.0 * p, 600.0, 300.0, 0.03)
+
+
+## A wet animal shaking off: fur flapping and a spray of droplets.
+func shake_off(s: SfxSynth, _v: int) -> void:
+	for k in 10:
+		s.noise(k * 0.06, 0.05, 0.5 * (1.0 - k * 0.07), 40.0, 3000.0, 2000.0, 400.0)
+	s.grains(0.05, 0.75, 40, 0.3, 6000.0, 0.004, 0.6)
+
+
 func loop_underwater(s: SfxSynth, _v: int) -> void:
 	var lp := 0.0
 	var lp2 := 0.0
@@ -526,3 +542,36 @@ func loop_sentinel(s: SfxSynth, _v: int) -> void:
 		s.buf[i] = (sin(TAU * p1) * 0.5 + tanh(sin(TAU * p2) * 2.0) * 0.2) * wob
 	s.noise(0.0, n / float(SfxSynth.RATE), 0.08, 0.0, 4000.0, 4000.0, 1500.0)
 	s.make_loop(0.5)
+
+
+## A crow: one or two harsh, raspy caws.
+func crow_caw(s: SfxSynth, v: int) -> void:
+	var p := _p(s, 0.08)
+	for k in 1 + v % 2:
+		var at := k * 0.32
+		s.tone(at, 0.26, 620.0 * p, 470.0 * p, 0.45, 6.0, W, 0.02)
+		s.tone(at, 0.26, 1240.0 * p, 940.0 * p, 0.2, 7.0, Q, 0.02)
+		s.noise(at, 0.24, 0.3, 7.0, 2600.0, 1800.0, 500.0, 0.02)
+
+
+## A gull: a few falling, squealing cries.
+func gull_call(s: SfxSynth, _v: int) -> void:
+	var p := _p(s, 0.1)
+	var count := s.rng.randi_range(2, 4)
+	for k in count:
+		var at := k * 0.2
+		s.tone(at, 0.17, 1500.0 * p, 1050.0 * p, 0.35, 5.0, T, 0.01)
+		s.tone(at, 0.17, 3000.0 * p, 2100.0 * p, 0.1, 6.0, S, 0.01)
+
+
+## An owl: soft, low "hoo... hoo-hoo".
+func owl_hoot(s: SfxSynth, _v: int) -> void:
+	var p := _p(s, 0.05)
+	for at in [0.0, 0.6, 0.85]:
+		s.tone(at, 0.32, 390.0 * p, 350.0 * p, 0.6, 3.5, S, 0.06)
+
+
+## Wings beating as birds take off.
+func wing_flap(s: SfxSynth, _v: int) -> void:
+	for k in 7:
+		s.noise(k * 0.07, 0.06, 0.6 * (1.0 - k * 0.1), 30.0, 1600.0, 900.0, 150.0, 0.01)

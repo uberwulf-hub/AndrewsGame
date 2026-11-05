@@ -39,11 +39,20 @@ const ENEMIES_ENABLED := false  # hostile camps are off while the opening is bui
 const SKILLS := ["Foraging", "Woodcraft", "Firecraft", "Survival", "Swimming"]
 const SKILL_MAX := 50
 
-## What each food is worth when eaten (raw, for now), out of 100 hunger.
+## What each food is worth when eaten, out of 100 hunger.
 const FOODS := {
 	"Berries": 12.0, "Grubs": 6.0, "Mushrooms": 8.0, "Bird eggs": 12.0,
 	"Fish": 18.0, "Crayfish": 10.0, "Clams": 9.0,
+	"Toasted grubs": 13.0, "Roasted mushrooms": 15.0, "Cooked eggs": 22.0,
+	"Roast fish": 34.0, "Boiled crayfish": 19.0, "Steamed clams": 17.0,
 }
+## Raw food -> what it becomes over a campfire (once you know how to cook).
+const COOKS := {
+	"Grubs": "Toasted grubs", "Mushrooms": "Roasted mushrooms", "Bird eggs": "Cooked eggs",
+	"Fish": "Roast fish", "Crayfish": "Boiled crayfish", "Clams": "Steamed clams",
+}
+## A hot meal warms you up a little, too.
+const COOKED_WARMTH := 8.0
 ## The pets' knacks: they get better at finding food the more they do it.
 const PET_KNACKS := {"fox": "Fox: Sniffing", "otter": "Otter: Fishing"}
 
@@ -113,11 +122,52 @@ const KNOW_HOW := {
 		"about": "Sticks in the middle, a ring of stones around. Warmth and light."},
 	"lean_to": {"name": "Lean-to", "needs": {"Sticks": 6, "Ferns": 5},
 		"about": "Sticks leaned on a pole, ferns on top. Rest under it and the cold creeps in slower."},
+	# Not built: done at a campfire (press E beside it).
+	"cooking": {"name": "Cooking", "needs": {}, "at_fire": true,
+		"about": "Hold food over a campfire (walk up, press E). Cooked food fills you up more and warms you."},
+	"torch_post": {"name": "Torch post", "needs": {"Sticks": 2, "Vines": 1, "Birch bark": 1},
+		"about": "Birch bark tied onto a stick with a vine, lit. Light, and a little warmth, wherever you put it."},
+	"rain_catcher": {"name": "Rain catcher", "needs": {"Sticks": 3, "Birch bark": 2, "Vines": 1},
+		"about": "A bark bowl on a little frame. Dew and rain collect in it: drink, and top up your canteen."},
+	# Not built: made and carried (Make, in Know-how).
+	"map": {"name": "Map", "needs": {"Charcoal": 1, "Birch bark": 2}, "carried": true,
+		"about": "Charcoal from the fire, drawn on birch bark. Shows everywhere you've been. M to look at it."},
 }
 
 var known: Array[String] = []
 ## Food items picked up so far (for "gather some food" goals).
 var food_found := 0
+## Things the Otter is itching to teach: finding something new (vines, birch
+## bark) gives him an idea, and asking him turns it into know-how.
+signal sparked(id: String, thought: Array)
+var sparks: Array[String] = []
+
+
+## Something you found gives the Otter an idea (once).
+## While false (the first night, so there is not too much going on at once),
+## finds are remembered quietly and brought up later by `open_sparks`.
+var sparks_open := true
+var _held_sparks := {}
+
+
+func spark(id: String, thought: Array = []) -> void:
+	if known.has(id) or sparks.has(id):
+		return
+	if not sparks_open:
+		_held_sparks[id] = thought
+		return
+	sparks.append(id)
+	sparked.emit(id, thought)
+
+
+# --- Time of day ---------------------------------------------------------------
+# The story starts at night. Once camp is set up and the three of them sit by
+# the fire, the night passes and morning comes.
+
+signal rest_requested
+var is_night := false
+## True when sitting by the fire would pass the night (the world decides when).
+var rest_ready := false
 
 
 ## Learns something new. `thought` is what the hero thinks as it clicks;
@@ -224,6 +274,18 @@ var shot_punch := false
 var shot_place := false
 var shot_forage := false
 var shot_settle := false
+var shot_dawn := false
+var shot_camp := false
+var shot_burn := false
+var shot_sit := false
+var shot_drown := false
+var shot_birds := false
+var shot_animals := false
+var shot_save := false
+var shot_ring := false
+var shot_map := false
+var shot_tools := false
+var shot_save_loaded := false
 var shot_help := false
 
 
@@ -325,6 +387,7 @@ func _setup_input() -> void:
 	_bind_key("swim_down", KEY_C)
 	_bind_key("swim_down", KEY_CTRL)
 	_bind_key("interact", KEY_E)
+	_bind_key("map", KEY_M)
 	_bind_key("character", KEY_TAB)
 	_bind_key("pause", KEY_ESCAPE)
 	_bind_key("volume_down", KEY_MINUS)
@@ -379,6 +442,38 @@ func _parse_args() -> void:
 					shot_tab = value
 			"--shot-help":
 				shot_help = true
+			"--shot-dawn":
+				shot_dawn = true
+				story_start = true
+			"--shot-sit":
+				shot_sit = true
+				story_start = true
+			"--shot-burn":
+				shot_burn = true
+				story_start = true
+			"--shot-birds":
+				shot_birds = true
+				story_start = true
+			"--shot-tools":
+				shot_tools = true
+			"--shot-map":
+				shot_map = true
+				story_start = true
+			"--shot-ring":
+				shot_ring = true
+				story_start = true
+			"--shot-save":
+				shot_save = true
+				story_start = true
+			"--shot-animals":
+				shot_animals = true
+				story_start = true
+			"--shot-drown":
+				shot_drown = true
+				story_start = true
+			"--shot-camp":
+				shot_camp = true
+				story_start = true
 			"--shot-settle":
 				shot_settle = true
 			"--shot-forage":
@@ -396,3 +491,54 @@ func _parse_args() -> void:
 		# would stop it drawing.)
 		get_window().set_flag(Window.FLAG_NO_FOCUS, true)
 		get_window().position = Vector2i(-5000, -5000)
+
+
+## Lets the Otter's ideas start, bringing up anything found while they were held.
+func open_sparks() -> void:
+	sparks_open = true
+	var held := _held_sparks
+	_held_sparks = {}
+	var first := true
+	for id in held:
+		if first:
+			spark(id, ["Hey... remember the stuff I picked up last night?", "I bet the Otter would have an idea for it."])
+			first = false
+		elif not known.has(id) and not sparks.has(id):
+			sparks.append(id)  # one "show me" is plenty; the rest come up when you talk
+
+
+# --- The map -----------------------------------------------------------------
+
+## Ground he's seen, for the map: a coarse grid over the whole world, 255 where
+## he's been near. Kept from the moment he wakes, so a map drawn later already
+## knows where you've walked.
+const MAP_CELLS := 110
+const SEE_RADIUS := 30.0
+var explored := PackedByteArray()
+signal explored_changed
+
+
+func explore_at(p: Vector3) -> void:
+	if explored.size() != MAP_CELLS * MAP_CELLS:
+		explored.resize(MAP_CELLS * MAP_CELLS)
+		explored.fill(0)
+	var cell := TERRAIN_SIZE / MAP_CELLS
+	var cx := int((p.x + TERRAIN_SIZE * 0.5) / cell)
+	var cz := int((p.z + TERRAIN_SIZE * 0.5) / cell)
+	var r := int(ceil(SEE_RADIUS / cell))
+	var changed := false
+	for j in range(-r, r + 1):
+		for i in range(-r, r + 1):
+			var x := cx + i
+			var z := cz + j
+			if i * i + j * j > r * r or x < 0 or z < 0 or x >= MAP_CELLS or z >= MAP_CELLS:
+				continue
+			if explored[z * MAP_CELLS + x] == 0:
+				explored[z * MAP_CELLS + x] = 255
+				changed = true
+	if changed:
+		explored_changed.emit()
+
+
+func has_map() -> bool:
+	return backpack.has("Map")

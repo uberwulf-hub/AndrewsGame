@@ -36,6 +36,7 @@ const MIX := {
 	"footstep_grass": -21.0, "footstep_stone": -21.0, "footstep_sand": -20.0, "footstep_snow": -20.0,
 	"footstep_water": -18.0, "gear_rustle": -29.0, "jump": -17.0, "land": -15.0, "dash": -12.0,
 	"splash_in": -11.0, "splash_out": -16.0, "swim_stroke": -15.0, "bubbles": -20.0,
+	"heartbeat": -7.0, "gasp": -11.0, "shake_off": -15.0,
 	# Abilities & player events
 	"nova": -8.0, "player_hurt": -11.0, "player_death": -7.0, "respawn": -10.0, "level_up": -8.0,
 	"equip": -11.0, "camp_cleared": -10.0, "ui_notify": -15.0,
@@ -46,7 +47,7 @@ const MIX := {
 	"brute_roar": -6.0, "brute_windup": -7.0, "brute_slam": -4.0, "brute_step": -10.0,
 	"death_stone": -9.0, "death_sentinel": -9.0,
 	# World
-	"bird_chirp": -17.0, "loop_crystal": -10.0, "loop_fire": -11.0, "loop_sentinel": -15.0,
+	"bird_chirp": -17.0, "crow_caw": -15.0, "gull_call": -16.0, "owl_hoot": -14.0, "wing_flap": -18.0, "loop_crystal": -10.0, "loop_fire": -11.0, "loop_sentinel": -15.0,
 	# Story
 	"thunder": -6.0, "door_slam": -8.0, "loop_rain": -14.0,
 }

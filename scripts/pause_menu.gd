@@ -10,6 +10,8 @@ var _dim: ColorRect
 var _menu: VBoxContainer
 var _options: VBoxContainer
 var _help: VBoxContainer
+var _save_button: Button
+var _saved_label: Label
 
 
 func _ready() -> void:
@@ -35,6 +37,8 @@ func _ready() -> void:
 	_menu.add_theme_constant_override("separation", 12)
 	stack.add_child(_menu)
 	_menu.add_child(_button("Resume", close))
+	_save_button = _button("Save Game", _save)
+	_menu.add_child(_save_button)
 	_menu.add_child(_button("Options", func():
 		_menu.visible = false
 		_options.visible = true))
@@ -45,6 +49,11 @@ func _ready() -> void:
 		get_tree().paused = false
 		get_tree().change_scene_to_file(TITLE_SCENE)))
 	_menu.add_child(_button("Quit", func(): get_tree().quit()))
+	_saved_label = Label.new()
+	_saved_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_saved_label.add_theme_font_size_override("font_size", 20)
+	_saved_label.add_theme_color_override("font_color", CREAM)
+	_menu.add_child(_saved_label)
 	_options = _build_options()
 	stack.add_child(_options)
 	_options.visible = false
@@ -73,6 +82,10 @@ func _unhandled_input(event: InputEvent) -> void:
 func open() -> void:
 	_dim.visible = true
 	_menu.visible = true
+	var world := get_parent()
+	_save_button.visible = Game.story_start
+	_save_button.disabled = not (world.has_method("can_save") and world.can_save())
+	_saved_label.text = "" if not _save_button.disabled or not Game.story_start else "(You can save once you're on dry land and free to move.)"
 	_options.visible = false
 	_help.visible = false
 	get_tree().paused = true
@@ -131,3 +144,12 @@ func _button(label: String, on_press: Callable) -> Button:
 		b.add_theme_stylebox_override(state, s)
 	b.pressed.connect(on_press)
 	return b
+
+
+func _save() -> void:
+	var world := get_parent()
+	if world.has_method("save_game") and world.save_game():
+		_saved_label.text = "Saved!"
+		Audio.play("ui_notify", null, -8.0, 1.1)
+	else:
+		_saved_label.text = "Couldn't save just now."

@@ -2,7 +2,8 @@ class_name TalkMenu
 extends PanelContainer
 ## Talking to the Fox or the Otter (E beside them): a few questions to pick
 ## from. Picking one closes the menu and the pet answers in a thought bubble.
-## Pauses the game while open; Esc or E closes it without asking.
+## The campfire uses the same menu for its choices. Pauses the game while
+## open; Esc or E closes it without picking.
 
 const CREAM := Color(0.97, 0.92, 0.8)
 const GOLD := Color(1.0, 0.84, 0.45)
@@ -29,15 +30,20 @@ func _ready() -> void:
 
 
 func open(companion: Companion) -> void:
+	open_menu("The Fox" if companion.who == "fox" else "The Otter", companion.talk_options())
+
+
+## `options` are [label, Callable] pairs.
+func open_menu(heading: String, options: Array) -> void:
 	for c in _box.get_children():
 		c.queue_free()
 	var title := Label.new()
-	title.text = "The Fox" if companion.who == "fox" else "The Otter"
+	title.text = heading
 	title.add_theme_font_size_override("font_size", 24)
 	title.add_theme_color_override("font_color", GOLD)
 	_box.add_child(title)
 	var first: Button = null
-	for option in companion.talk_options():
+	for option in options:
 		var b := Button.new()
 		b.text = option[0]
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT

@@ -75,8 +75,8 @@ func refresh() -> void:
 		for knack in Game.PET_KNACKS.values():
 			_skill_bar(knack, knack.get_slice(": ", 1), Color(1.0, 0.65, 0.35))
 	if p.weapon:
-		_heading(_left, "Weapon", 22)
-		_text(_left, "%s\nLv %d %s %s" % [p.weapon.display_name, p.weapon.level, WeaponData.RARITY_NAMES[p.weapon.rarity], p.weapon.archetype], p.weapon.color)
+		_heading(_left, "Dream tool", 22)
+		_text(_left, "%s\nLv %d %s %s" % [p.weapon.display_name, p.weapon.level, WeaponData.RARITY_NAMES[p.weapon.rarity], p.weapon.kind], p.weapon.color)
 
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 10)
@@ -145,6 +145,10 @@ func _know_how() -> void:
 		_text(_right, "You haven't figured anything out yet.\nLook around. The world is full of ideas.", Color(0.7, 0.68, 0.62))
 	for id in Game.known:
 		var entry: Dictionary = Game.KNOW_HOW[id]
+		if entry.get("at_fire", false):
+			_text(_right, entry.name + "   (at a campfire)", CREAM)
+			_text(_right, "    " + entry.about, Color(0.78, 0.75, 0.68))
+			continue
 		var needs: Dictionary = entry.needs
 		var craftable := true
 		var parts: Array[String] = []
@@ -152,9 +156,15 @@ func _know_how() -> void:
 			var have: int = Game.inventory.get(item, 0)
 			craftable = craftable and have >= needs[item]
 			parts.append("%s %d/%d" % [item, mini(have, needs[item]), needs[item]])
-		_row(_right, entry.name, "Build", craftable, func():
-			if player.begin_placing(id):
+		if entry.get("carried", false):
+			var made := Game.backpack.has(entry.name)
+			_row(_right, entry.name + ("   (in your backpack)" if made else ""), "Make", craftable and not made, func():
+				player.make(id)
 				close())
+		else:
+			_row(_right, entry.name, "Build", craftable, func():
+				if player.begin_placing(id):
+					close())
 		_text(_right, "    " + "   ".join(parts), GOLD if craftable else Color(0.7, 0.68, 0.62))
 		_text(_right, "    " + entry.about, Color(0.78, 0.75, 0.68))
 	var unknown := Game.KNOW_HOW.size() - Game.known.size()

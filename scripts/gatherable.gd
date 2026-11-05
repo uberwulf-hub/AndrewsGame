@@ -9,6 +9,11 @@ const KINDS := {
 	"stones": {"item": "Stones", "count": [1, 2], "skill": "Foraging", "verb": "Pick up stones"},
 	"berries": {"item": "Berries", "count": [2, 4], "skill": "Foraging", "verb": "Pick berries", "regrow": 240.0},
 	"ferns": {"item": "Ferns", "count": [2, 3], "skill": "Foraging", "verb": "Cut some ferns"},
+	# Finding these gives the Otter an idea (see Game.spark).
+	"vines": {"item": "Vines", "count": [2, 3], "skill": "Woodcraft", "verb": "Pull down some vines", "sparks": "torch_post",
+		"spark_thought": ["These vines are tough. Like rope.", "...I bet the Otter would have an idea for these."]},
+	"bark": {"item": "Birch bark", "count": [2, 3], "skill": "Woodcraft", "verb": "Peel some birch bark", "sparks": "rain_catcher",
+		"spark_thought": ["Birch bark. Papery, and it doesn't soak up water.", "...I bet the Otter would have an idea for this."]},
 	# Brought back by the Fox and the Otter and dropped at your feet.
 	"grubs": {"item": "Grubs", "count": [2, 3], "skill": "Foraging", "verb": "Take the grubs (ew)"},
 	"mushrooms": {"item": "Mushrooms", "count": [2, 3], "skill": "Foraging", "verb": "Take the mushrooms"},
@@ -62,6 +67,8 @@ func gather(rng: RandomNumberGenerator) -> String:
 	var bonus := 1 if rng.randf() < Game.skill_level(info.skill) * 0.02 else 0
 	var count: int = rng.randi_range(info.count[0], info.count[1]) + bonus
 	Game.add_item(info.item, count)
+	if info.has("sparks"):
+		Game.spark(info.sparks, info.spark_thought)
 	if Game.FOODS.has(info.item):
 		Game.food_found += count
 	Game.practice(info.skill, 2.0)
@@ -83,7 +90,7 @@ func set_focused(on: bool) -> void:
 		return
 	_focused = on
 	for m in _mats:
-		m.emission_energy_multiplier = 1.4 if on else 0.35
+		m.emission_energy_multiplier = 0.8 if on else 0.12
 
 
 func _build(rng: RandomNumberGenerator) -> void:
@@ -107,6 +114,33 @@ func _build(rng: RandomNumberGenerator) -> void:
 			var frond := _readable(Color(0.32, 0.62, 0.26))
 			var clump := MeshKit.part(_visual, NatureKit.fern(10, rng.randi()), frond)
 			clump.scale = Vector3.ONE * 1.5
+		"vines":
+			# Vines draped over a mossy stone, a few loose loops on the ground.
+			var moss := MeshKit.mat(Color(0.3, 0.36, 0.24), 0.95)
+			var rock := MeshKit.part(_visual, MeshKit.sphere(0.32, 0.36, 8, 5), moss, Vector3(0, 0.12, 0))
+			rock.scale = Vector3(1.3, 0.75, 1.0)
+			var vine := _readable(Color(0.38, 0.55, 0.2))
+			for k in 6:
+				var a := TAU * k / 6.0 + rng.randf_range(-0.3, 0.3)
+				var strand := MeshKit.part(_visual, MeshKit.cyl(0.018, 0.018, rng.randf_range(0.7, 1.0), 5), vine,
+					Vector3(cos(a), 0, sin(a)) * 0.28 + Vector3(0, 0.2, 0))
+				strand.rotation = Vector3(PI / 2 - 0.5, -a + PI / 2, 0)
+			for k in 3:
+				var loop := MeshKit.part(_visual, MeshKit.cyl(0.16, 0.16, 0.025, 10), vine,
+					Vector3(rng.randf_range(-0.5, 0.5), 0.02, rng.randf_range(0.3, 0.55)))
+				loop.scale = Vector3(1.0, 1.0, rng.randf_range(0.6, 1.0))
+		"bark":
+			# A fallen birch: white bark with dark marks, a curl peeling off.
+			var white := _readable(Color(0.9, 0.88, 0.82))
+			var birch := MeshKit.part(_visual, MeshKit.cyl(0.16, 0.18, 1.6, 9), white, Vector3(0, 0.16, 0), Vector3(0, 0, PI / 2))
+			birch.rotation.y = rng.randf_range(-0.2, 0.2)
+			var mark := MeshKit.mat(Color(0.15, 0.13, 0.12), 0.9)
+			for k in 7:
+				var x := rng.randf_range(-0.7, 0.7)
+				var a := rng.randf() * TAU
+				MeshKit.part(_visual, MeshKit.box(Vector3(0.03, 0.02, 0.09)), mark,
+					Vector3(x, 0.16 + sin(a) * 0.17, cos(a) * 0.17), Vector3(a, 0, 0))
+			MeshKit.part(_visual, MeshKit.box(Vector3(0.3, 0.012, 0.2)), white, Vector3(0.35, 0.36, 0.05), Vector3(0.4, 0.2, 0.3))
 		"grubs":
 			MeshKit.part(_visual, MeshKit.sphere(0.16, 0.06, 7, 3), MeshKit.mat(Color(0.2, 0.14, 0.09), 1.0), Vector3(0, 0.02, 0))
 			var grub := _readable(Color(0.92, 0.85, 0.66))
@@ -138,18 +172,45 @@ func _build(rng: RandomNumberGenerator) -> void:
 				var s := MeshKit.part(_visual, MeshKit.sphere(0.04, 0.05, 6, 4), shell, Vector3(rng.randf_range(-0.1, 0.1), 0.03, rng.randf_range(-0.1, 0.1)))
 				s.scale = Vector3(1.0, 0.6, 1.8 if kind == "crayfish" else 1.2)
 		"fire_ring":
-			# Long cold: blackened stones, a few charred sticks, a smudge of ash.
-			var soot := MeshKit.mat(Color(0.2, 0.19, 0.18), 0.95)
+			# Long cold: a scorched patch, a full ring of big pale stones, charred
+			# sticks and a smudge of ash, so it reads at a glance.
+			var scorch := MeshKit.mat(Color(0.08, 0.07, 0.06), 1.0)
 			var char_wood := MeshKit.mat(Color(0.09, 0.07, 0.06), 1.0)
-			var ash := MeshKit.mat(Color(0.42, 0.41, 0.4), 1.0)
-			MeshKit.part(_visual, MeshKit.cyl(0.42, 0.45, 0.02, 12), ash, Vector3(0, 0.01, 0))
-			for k in 9:
-				var a := TAU * k / 9.0 + rng.randf_range(-0.12, 0.12)
-				var s := MeshKit.part(_visual, MeshKit.sphere(0.13, 0.15, 7, 5), _readable(Color(0.5, 0.48, 0.45)) if k == 0 else soot, Vector3(cos(a), 0, sin(a)) * 0.6 + Vector3(0, 0.05, 0))
-				s.scale = Vector3(rng.randf_range(0.9, 1.3), rng.randf_range(0.6, 0.85), rng.randf_range(0.9, 1.2))
+			var ash := MeshKit.mat(Color(0.5, 0.49, 0.47), 1.0)
+			var stone := _readable(Color(0.66, 0.63, 0.58))
+			MeshKit.part(_visual, MeshKit.cyl(1.05, 1.1, 0.012, 16), scorch, Vector3(0, 0.006, 0))
+			MeshKit.part(_visual, MeshKit.cyl(0.45, 0.5, 0.02, 12), ash, Vector3(0, 0.014, 0))
+			for k in 11:
+				var a := TAU * k / 11.0 + rng.randf_range(-0.08, 0.08)
+				var s := MeshKit.part(_visual, MeshKit.sphere(0.17, 0.19, 7, 5), stone, Vector3(cos(a), 0, sin(a)) * 0.78 + Vector3(0, 0.07, 0))
+				s.scale = Vector3(rng.randf_range(0.9, 1.25), rng.randf_range(0.65, 0.85), rng.randf_range(0.9, 1.15))
 			for k in 4:
-				var stick := MeshKit.part(_visual, MeshKit.cyl(0.025, 0.035, rng.randf_range(0.4, 0.6), 5), char_wood, Vector3(rng.randf_range(-0.12, 0.12), 0.05, rng.randf_range(-0.12, 0.12)))
+				var stick := MeshKit.part(_visual, MeshKit.cyl(0.03, 0.04, rng.randf_range(0.5, 0.7), 5), char_wood, Vector3(rng.randf_range(-0.12, 0.12), 0.06, rng.randf_range(-0.12, 0.12)))
 				stick.rotation = Vector3(PI / 2 - 0.25, TAU * k / 4.0 + rng.randf_range(-0.3, 0.3), 0)
+			# A few coals still glowing under the ash, and a thread of smoke, so it
+			# catches the eye in the dark.
+			for k in 6:
+				MeshKit.part(_visual, MeshKit.sphere(0.04, 0.05, 5, 3), MeshKit.glow(Color(1.0, 0.35, 0.08), 3.5), Vector3(rng.randf_range(-0.2, 0.2), 0.03, rng.randf_range(-0.2, 0.2)))
+			var glow := OmniLight3D.new()
+			glow.light_color = Color(1.0, 0.45, 0.15)
+			glow.light_energy = 1.3
+			glow.omni_range = 3.8
+			glow.position = Vector3(0, 0.25, 0)
+			_visual.add_child(glow)
+			var smoke := CPUParticles3D.new()
+			var puff := MeshKit.sphere(0.06, -1.0, 5, 3)
+			var smoke_mat := MeshKit.mat(Color(0.6, 0.6, 0.62, 0.35))
+			smoke_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			puff.material = smoke_mat
+			smoke.mesh = puff
+			smoke.amount = 10
+			smoke.lifetime = 3.0
+			smoke.direction = Vector3.UP
+			smoke.spread = 8.0
+			smoke.initial_velocity_min = 0.3
+			smoke.initial_velocity_max = 0.5
+			smoke.position = Vector3(0, 0.1, 0)
+			_visual.add_child(smoke)
 		"berries":
 			var leaf := MeshKit.mat(Color(0.16, 0.34, 0.14), 0.9)
 			for k in 4:
@@ -160,7 +221,7 @@ func _build(rng: RandomNumberGenerator) -> void:
 			var berry := MeshKit.mat(Color(0.75, 0.08, 0.2), 0.3)
 			berry.emission_enabled = true
 			berry.emission = Color(0.5, 0.02, 0.1)
-			berry.emission_energy_multiplier = 0.4
+			berry.emission_energy_multiplier = 0.15
 			for k in 18:
 				var dir := Vector3(rng.randf_range(-1, 1), rng.randf_range(0.0, 1), rng.randf_range(-1, 1)).normalized()
 				MeshKit.part(_berries, MeshKit.sphere(0.035, -1.0, 5, 3), berry, Vector3(0, 0.35, 0) + dir * 0.38)
@@ -174,7 +235,7 @@ func _readable(color: Color) -> StandardMaterial3D:
 	var m := MeshKit.mat(color, 0.9)
 	m.emission_enabled = true
 	m.emission = color * 0.5
-	m.emission_energy_multiplier = 0.35
+	m.emission_energy_multiplier = 0.12
 	_mats.append(m)
 	return m
 
@@ -182,10 +243,10 @@ func _readable(color: Color) -> StandardMaterial3D:
 ## A few slow pale motes drifting up, visible from a distance in the dark.
 func _add_glint() -> void:
 	var motes := CPUParticles3D.new()
-	var dot := MeshKit.sphere(0.018, -1.0, 4, 2)
-	dot.material = MeshKit.glow(Color(1.0, 0.95, 0.75), 3.0)
+	var dot := MeshKit.sphere(0.012, -1.0, 4, 2)
+	dot.material = MeshKit.glow(Color(1.0, 0.95, 0.75), 1.2)
 	motes.mesh = dot
-	motes.amount = 4
+	motes.amount = 2
 	motes.lifetime = 2.5
 	motes.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
 	motes.emission_sphere_radius = 0.3
@@ -195,5 +256,5 @@ func _add_glint() -> void:
 	motes.initial_velocity_min = 0.1
 	motes.initial_velocity_max = 0.25
 	motes.position.y = 0.15
-	motes.visibility_range_end = 30.0
+	motes.visibility_range_end = 18.0
 	add_child(motes)

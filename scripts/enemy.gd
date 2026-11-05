@@ -209,6 +209,7 @@ func _physics_process(delta: float) -> void:
 		move = _wander(delta)
 		health = minf(max_health, health + max_health * 0.15 * delta)
 
+	move = _avoid_fires(move)
 	var speed: float = _data["speed"] * (0.5 if _slow_time > 0.0 else 1.0)
 	velocity.x = move.x * speed + _knockback.x
 	velocity.z = move.z * speed + _knockback.z
@@ -450,3 +451,20 @@ func _bar_mat(color: Color, priority: int) -> StandardMaterial3D:
 	m.no_depth_test = true
 	m.render_priority = priority
 	return m
+
+
+## Nobody wants to walk into a fire: within a couple of meters of one, the
+## part of `move` heading into it is turned aside.
+func _avoid_fires(move: Vector3) -> Vector3:
+	for f in get_tree().get_nodes_in_group("campfires"):
+		var off := global_position - (f as Node3D).global_position
+		off.y = 0.0
+		var d := off.length()
+		if d < 2.2 and d > 0.01:
+			var out := off / d
+			var inward := -move.dot(out)
+			if inward > 0.0:
+				move += out * inward * (1.0 - d / 2.2) * 1.6
+			if d < 1.2:
+				move += out * 0.6
+	return move

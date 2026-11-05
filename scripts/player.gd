@@ -102,11 +102,45 @@ var _punch_time := 0.0  # counts down while a punch is out
 var _punch_cooldown := 0.0
 var _punch_landed := false
 var _punch_arm: PunchArm
+var _cross_legs: CrossLegs
+var _sitting := false  # cross-legged on the ground (blended in by _cross_legs)
+var _sit_forward := Vector3.FORWARD
 
 ## Building: the preview being placed, and a pause between "can't build here" thoughts.
 signal says(lines: Array)
 var _placer: Placer
 var _cant_build_cooldown := 0.0
+
+## Stepping into a fire: a short hop back out during which the controls let go.
+var _stagger := 0.0
+var _soot_bones := {}  # bone name -> BoneAttachment3D carrying soot marks
+
+## Sitting by a campfire (from its menu): E still opens the fire menu, and any
+## move key makes him get up (the getting-up motion plays out first).
+signal stood_up
+var seated := false
+var _seat_fire: Node3D
+var _getting_up := false
+
+## Holding his breath: air runs out after AIR_TIME under the surface and he
+## passes out (the pets tow him ashore). As it runs low a heartbeat grows
+## louder and faster and the view closes in (the HUD listens to `heartbeat`).
+signal passed_out
+signal heartbeat(panic: float)
+const AIR_TIME := 30.0
+var air := 1.0
+var knocked_out := false
+var tow := Vector3.ZERO  # the pets pulling him along while he's out
+var _was_under := false
+var _air_warned := false
+var _heart_timer := 0.0
+
+## Soaked after a swim: clothes darker and shiny, dripping, drying off over a
+## minute or so (much faster by a fire). Wet clothes make the cold bite harder.
+var wet := 0.0
+var _wet_mat: StandardMaterial3D
+var _wet_shown := 0.0
+var _was_soaked := false
 
 
 func _ready() -> void:
@@ -169,6 +203,10 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
+	if _cross_legs:
+		_cross_legs.amount = move_toward(_cross_legs.amount, 1.0 if _sitting else 0.0, delta / (0.5 if _sitting else 0.8))
+		_cross_legs.ground = global_position.y
+		_cross_legs.forward = _sit_forward
 	_camera_rig.rotation.y = _yaw
 	_pitch_pivot.rotation.x = _pitch + _recoil
 	var smooth := 1.0 - exp(-12.0 * delta)
@@ -206,6 +244,8 @@ func _update_water_state() -> void:
 		if feet_wet and speed > 2.0:
 			Audio.play("splash_in", global_position, clampf(speed - 8.0, -6.0, 5.0))
 			FX.burst(Vector3(global_position.x, Game.WATER_LEVEL, global_position.z), Color(0.8, 0.95, 1.0), 18, 4.0, 0.07)
+		if feet_wet and Burns.wash_off(_model):
+			Game.notify("The water rinses off the soot.", Color(0.6, 0.85, 1.0))
 		elif not feet_wet:
 			Audio.play("splash_out", global_position)
 		_feet_wet = feet_wet
@@ -265,6 +305,144 @@ func _swim(delta: float, input: Vector2) -> Vector3:
 	return Vector3(wish.x, 0.0, wish.z)
 
 
+## Head under: sunk clearly below where he floats with his head out.
+func head_under() -> bool:
+	return swimming and global_position.y < Game.WATER_LEVEL - FLOAT_DEPTH - 0.3
+
+
+## How close he is to running out of air: 0 while there's plenty, rising to 1
+## as the last of it goes.
+func low_air() -> float:
+	return clampf((0.55 - air) / 0.55, 0.0, 1.0)
+
+
+func _update_air(delta: float) -> void:
+	var under := head_under()
+	if under:
+		air = maxf(0.0, air - delta / AIR_TIME)
+		if air < 0.35 and not _air_warned:
+			_air_warned = true
+			Game.notify("Running out of air! Swim up (Space)!", Color(0.6, 0.85, 1.0))
+		if air <= 0.0:
+			_pass_out()
+			return
+	else:
+		if _was_under and air < 0.75:
+			# Breaking the surface after a long one: a big gulp of air.
+			Audio.play("gasp", null, lerpf(-6.0, 2.0, low_air()))
+			FX.burst(global_position + Vector3.UP * 1.6, Color(0.85, 0.95, 1.0), 10, 2.0, 0.05)
+		air = minf(1.0, air + delta / 3.0)
+		if air > 0.6:
+			_air_warned = false
+	_was_under = under
+	# The heartbeat speeds up and gets louder the lower the air.
+	var panic := low_air()
+	_heart_timer -= delta
+	if panic > 0.0 and _heart_timer <= 0.0:
+		_heart_timer = lerpf(1.0, 0.36, panic)
+		Audio.play("heartbeat", null, lerpf(-14.0, 4.0, panic), lerpf(0.95, 1.1, panic), 0.0)
+		heartbeat.emit(panic)
+
+
+func _update_wet(delta: float) -> void:
+	var depth := water_depth()
+	if depth > 0.15:
+		# Wet up to wherever the water reaches; a swim soaks him through.
+		wet = maxf(wet, clampf(depth / SWIM_DEPTH, 0.0, 1.0))
+	else:
+		var by_fire := Campfire.warms(get_tree(), global_position)
+		wet = maxf(0.0, wet - delta / (12.0 if by_fire else 70.0))
+		if wet > 0.4 and randf() < delta * 5.0:
+			var drip := global_position + Vector3(randf_range(-0.25, 0.25), randf_range(0.4, 1.3), randf_range(-0.25, 0.25))
+			FX.burst(drip, Color(0.7, 0.85, 1.0), 1, 0.3, 0.02)
+		if _was_soaked and wet > 0.9 and randf() < 0.35:
+			says.emit([["Brrr. Soggy socks.", "Squish. Squish. Squish.", "Note to self: dry clothes are nice."].pick_random()])
+		_was_soaked = false
+	if depth > SWIM_DEPTH:
+		_was_soaked = true  # a real swim, not a paddle
+	if absf(wet - _wet_shown) < 0.03 and (wet > 0.0 or _wet_shown == 0.0):
+		return
+	if _wet_mat == null:
+		_wet_mat = StandardMaterial3D.new()
+		_wet_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_wet_mat.albedo_color = Color(0.03, 0.04, 0.06, 0.0)
+		_wet_mat.roughness = 0.1
+		_wet_mat.metallic_specular = 1.0
+	var was_dry := _wet_shown == 0.0
+	_wet_shown = wet
+	_wet_mat.albedo_color.a = 0.4 * wet
+	if was_dry != (wet == 0.0):
+		for m in _model.find_children("*", "MeshInstance3D", true, false):
+			if not m.is_in_group("soot"):
+				(m as MeshInstance3D).material_overlay = _wet_mat if wet > 0.0 else null
+
+
+## Out of air: he goes limp and drifts up to lie on the surface. The world
+## takes it from there (the pets come for him); `wake_on_shore` ends it.
+func _pass_out() -> void:
+	knocked_out = true
+	frozen = true
+	aiming = false
+	cancel_placing()
+	velocity = Vector3.ZERO
+	tow = Vector3.ZERO
+	_model.transform = Transform3D.IDENTITY
+	_legs.rotation.y = _swim_facing
+	_torso.rotation.y = _swim_facing
+	_pitch = -0.6
+	if _rig:
+		_rig.rotation.y = _swim_facing
+		_rig.play("getting_up", 0.0, 0.8)  # held on its first frame: lying flat
+	else:
+		_model.rotation.x = -PI / 2
+	FX.burst(global_position + Vector3.UP * 1.2, Color(0.85, 0.95, 1.0), 16, 1.5, 0.05)
+	Audio.play("bubbles", null, 2.0, 0.8)
+	passed_out.emit()
+
+
+## Lying limp: drifts up to the surface and bobs there, or gets towed along.
+func _update_knocked_out(delta: float) -> void:
+	var float_y := Game.WATER_LEVEL - 0.22
+	var y := global_position.y
+	if y < float_y - 0.05:
+		y = move_toward(y, float_y, 0.9 * delta)
+	else:
+		y = float_y + sin(Time.get_ticks_msec() * 0.002) * 0.04
+	if Game.ground_at(global_position.x, global_position.z) > Game.WATER_LEVEL - 0.6:
+		tow = Vector3.ZERO  # into the shallows: they can stop pulling
+	global_position = Vector3(global_position.x, y, global_position.z) + tow * delta
+	velocity = Vector3.ZERO
+	if tow.length() > 0.1:
+		var facing := atan2(tow.x, tow.z)  # turned to lie along the way he is pulled
+		_legs.rotation.y = lerp_angle(_legs.rotation.y, facing, 1.0 - exp(-2.0 * delta))
+		if _rig:
+			_rig.rotation.y = _legs.rotation.y
+
+
+## Comes to on dry ground at `spot`, lying there, then gets up (the screen is
+## black when this is called).
+func wake_on_shore(spot: Vector3, facing: float) -> void:
+	knocked_out = false
+	wet = 1.0
+	_was_soaked = false
+	tow = Vector3.ZERO
+	air = 1.0
+	_was_under = false
+	swimming = false
+	global_position = spot
+	velocity = Vector3.ZERO
+	_model.transform = Transform3D.IDENTITY
+	_feet_wet = false
+	_legs.rotation.y = facing
+	_torso.rotation.y = facing
+	_yaw = facing + PI
+	_pitch = -0.28
+	if _rig:
+		_rig.rotation.y = facing
+		_rig.current = ""
+		_rig.play("getting_up", 0.0, 0.0)
+
+
 func _physics_process(delta: float) -> void:
 	if not alive:
 		_respawn_timer -= delta
@@ -272,7 +450,13 @@ func _physics_process(delta: float) -> void:
 			_respawn()
 		return
 	_tick_timers(delta)
+	_update_cooking(delta)
+	if knocked_out:
+		_update_knocked_out(delta)
+		return
 	if frozen:
+		if seated:
+			_update_seated()
 		velocity.x = 0.0
 		velocity.z = 0.0
 		velocity.y -= GRAVITY * delta
@@ -287,6 +471,10 @@ func _physics_process(delta: float) -> void:
 	if Game.story_start and not aiming:
 		speed = STORY_RUN_SPEED if _sprinting else STORY_WALK_SPEED
 	_update_water_state()
+	_update_air(delta)
+	_update_wet(delta)
+	if knocked_out:
+		return
 
 	if swimming:
 		wish = _swim(delta, input)
@@ -295,6 +483,8 @@ func _physics_process(delta: float) -> void:
 			_dash_timer -= delta
 			velocity.x = _dash_dir.x * DASH_SPEED
 			velocity.z = _dash_dir.z * DASH_SPEED
+		elif _stagger > 0.0:
+			_stagger -= delta
 		else:
 			var accel := 1.0 - exp(-(14.0 if is_on_floor() else 4.0) * delta)
 			var wade := 1.0 - clampf(water_depth() / SWIM_DEPTH, 0.0, 1.0) * 0.45
@@ -323,7 +513,7 @@ func _physics_process(delta: float) -> void:
 		_nova()
 	if Input.is_action_just_pressed("reload"):
 		_start_reload()
-	if Input.is_action_just_pressed("interact"):
+	if Input.is_action_just_pressed("interact") and cooking == "":
 		_interact()
 	if _placer:
 		_update_placing(captured)
@@ -541,6 +731,57 @@ func take_damage(amount: float) -> void:
 		_die()
 
 
+## Stepped into a fire: ouch! A little damage, a hop back out, and a sooty
+## smudge on the leg that was nearest the flames.
+func burn(from: Vector3) -> void:
+	var away := Burns._away(from, global_position)
+	take_damage(5.0)
+	if not alive:
+		return
+	if not frozen:
+		velocity = away * 5.5 + Vector3.UP * 4.2
+		_stagger = 0.4
+	Audio.play("elem_fire", global_position, -3.0)
+	FX.burst(global_position + Vector3.UP * 0.3, Color(1.0, 0.55, 0.15), 10, 2.5, 0.04)
+	says.emit([Burns.HERO_LINES.pick_random()])
+	_soot_mark(from)
+
+
+func _soot_mark(from: Vector3) -> void:
+	if _rig == null or _rig.skeleton == null:
+		var shin := global_position + Vector3.UP * 0.35
+		var toward := Vector3(from.x - shin.x, 0.0, from.z - shin.z).normalized()
+		Burns.mark(_model, shin + toward * 0.1, toward)
+		return
+	var sk := _rig.skeleton
+	# Whichever shin is nearer the fire takes the smudge.
+	var best := -1
+	var best_dist := INF
+	for b in sk.get_bone_count():
+		var n := sk.get_bone_name(b)
+		if n.ends_with("LeftLeg") or n.ends_with("RightLeg"):
+			var d := (sk.global_transform * sk.get_bone_global_pose(b).origin).distance_to(from)
+			if d < best_dist:
+				best = b
+				best_dist = d
+	if best < 0:
+		return
+	var knee := sk.global_transform * sk.get_bone_global_pose(best).origin
+	var children := sk.get_bone_children(best)
+	var ankle := sk.global_transform * sk.get_bone_global_pose(children[0]).origin if children.size() > 0 else knee - Vector3.UP * 0.45
+	var spot := knee.lerp(ankle, randf_range(0.35, 0.6))
+	var out := Vector3(from.x - spot.x, 0.0, from.z - spot.z).normalized()
+	var bone_name := sk.get_bone_name(best)
+	var holder: BoneAttachment3D = _soot_bones.get(bone_name)
+	if not is_instance_valid(holder):
+		holder = BoneAttachment3D.new()
+		holder.bone_name = bone_name
+		sk.add_child(holder)
+		_soot_bones[bone_name] = holder
+	holder.global_transform = sk.global_transform * sk.get_bone_global_pose(best)
+	Burns.mark(holder, spot + out * 0.055, out, 0.055)
+
+
 func heal(amount: float) -> void:
 	health = minf(max_health, health + amount)
 
@@ -587,6 +828,9 @@ func _respawn() -> void:
 	_reload_timer = 0.0
 	alive = true
 	swimming = false
+	air = 1.0
+	knocked_out = false
+	tow = Vector3.ZERO
 	_model.transform = Transform3D.IDENTITY
 	_model.visible = true
 	Audio.play("respawn", null, 0.0, 1.0, 0.0)
@@ -621,6 +865,11 @@ var focused_gatherable: Gatherable
 ## A pet close enough to talk to (when nothing to pick up is closer).
 var focused_companion: Companion
 signal talk_requested(companion: Companion)
+## Something built that E works on (a campfire, a rain catcher), when no pet
+## or pickup is closer. It's in the "usables" group with use_radius(),
+## use_prompt() and use(player).
+var focused_usable: Node3D
+signal fire_requested(fire: Campfire)
 var _warned := {}
 var _swim_practice := 0.0
 
@@ -630,11 +879,12 @@ func _update_needs(delta: float) -> void:
 		return
 	Game.thirst = maxf(0.0, Game.thirst - THIRST_RATE * delta)
 	Game.hunger = maxf(0.0, Game.hunger - HUNGER_RATE * delta)
-	if Campfire.warms(get_tree(), global_position):
+	if Campfire.warms(get_tree(), global_position) or TorchPost.warms(get_tree(), global_position):
 		Game.warmth = minf(100.0, Game.warmth + FIRE_WARM_RATE * delta)
 	else:
 		var sheltered := 0.4 if Shelter.covers(get_tree(), global_position) else 1.0  # out of the wind
-		Game.warmth = maxf(0.0, Game.warmth - COLD_RATE * delta * (2.0 if swimming else sheltered))
+		var daytime := 1.0 if Game.is_night else 0.3  # the sun takes the edge off
+		Game.warmth = maxf(0.0, Game.warmth - COLD_RATE * delta * daytime * (2.0 if swimming else sheltered * (1.0 + wet * 0.6)))  # wet clothes chill
 	if Game.lowest_need() <= 0.0 and health > max_health * NEED_FLOOR:
 		health -= 0.4 * delta
 	for need in [["warmth", "You're getting cold. A fire would help."], ["hunger", "Your stomach growls."], ["thirst", "Your mouth is dry. Find water."]]:
@@ -652,38 +902,70 @@ func _update_needs(delta: float) -> void:
 	_update_gather_focus()
 
 
+## What E acts on: the one thing within reach that the cursor (the middle of
+## the screen) is pointing at, or failing that, something right at your feet.
+## Pets only count when you point at them, so they don't keep popping up
+## while they mill about. Nothing gets picked from a list.
+var focused: Node = null
+## Pointing at it: within this share of the screen's height of the middle.
+const AIM_SLACK := 0.11
+## Right at your feet: picked even without pointing.
+const UNDERFOOT := 1.1
+
+
 func _update_gather_focus() -> void:
-	var best: Gatherable = null
-	var best_dist := 2.8
+	var pick := [null, INF]  # [node, score]; an array so the lambda below can update it
+	var view := get_viewport().get_visible_rect().size
+	var middle := view * 0.5
+	var slack := view.y * AIM_SLACK
+	var consider := func(node: Node, at: Vector3, reach: float, lift: float, must_point: bool):
+		var to := at - global_position
+		to.y = 0.0
+		var d := to.length()
+		if d > reach:
+			return
+		var score := INF
+		var tip := at + Vector3.UP * lift
+		if camera and not camera.is_position_behind(tip):
+			var off := camera.unproject_position(tip).distance_to(middle)
+			if off < slack:
+				score = off / slack + d * 0.1
+		if score == INF and not must_point and d < UNDERFOOT:
+			score = 1.5 + d
+		if score < pick[1]:
+			pick[0] = node
+			pick[1] = score
 	for node in get_tree().get_nodes_in_group("gatherables"):
-		var g := node as Gatherable
-		if not g.available:
-			continue
-		var d := g.global_position.distance_to(global_position)
-		if d < best_dist:
-			best_dist = d
-			best = g
-	if best != focused_gatherable:
+		if (node as Gatherable).available:
+			consider.call(node, node.global_position, 2.8, 0.15, false)
+	for node in get_tree().get_nodes_in_group("companions"):
+		var c := node as Companion
+		if c.state == Companion.State.FOLLOWING:
+			consider.call(c, c.body.global_position, 4.0, c.head_height * 0.5, true)
+	for node in get_tree().get_nodes_in_group("usables"):
+		consider.call(node, node.global_position, node.use_radius(), 0.4, false)
+	var best: Node = pick[0]
+	focused = best
+	var gather := best as Gatherable
+	if gather != focused_gatherable:
 		if is_instance_valid(focused_gatherable):
 			focused_gatherable.set_focused(false)
-		if best:
-			best.set_focused(true)
-	focused_gatherable = best
-	focused_companion = null
-	if best == null:
-		var closest := 2.4
-		for node in get_tree().get_nodes_in_group("companions"):
-			var c := node as Companion
-			if c.state == Companion.State.FOLLOWING and c.body.global_position.distance_to(global_position) < closest:
-				closest = c.body.global_position.distance_to(global_position)
-				focused_companion = c
+		if gather:
+			gather.set_focused(true)
+	focused_gatherable = gather
+	focused_companion = best as Companion
+	focused_usable = best if best != null and best.is_in_group("usables") else null
 
 
-## E: gather what's in front of you, else talk to a pet beside you, else swap
-## in a weapon, else drink if you're standing in water.
+## E: gather what's in front of you, else talk to a pet beside you or use
+## what's built there, else swap in a weapon, else drink if you're standing
+## in water.
 func _interact() -> void:
 	if focused_gatherable == null and is_instance_valid(focused_companion):
 		talk_requested.emit(focused_companion)
+		return
+	if focused_gatherable == null and is_instance_valid(focused_usable):
+		focused_usable.use(self)
 		return
 	if is_instance_valid(focused_gatherable):
 		var got := focused_gatherable.gather(Game.rng)
@@ -706,8 +988,127 @@ func eat(item: String) -> void:
 		Game.hunger = minf(100.0, Game.hunger + Game.FOODS[item])
 		if item == "Berries":
 			Game.thirst = minf(100.0, Game.thirst + 3.0)  # juicy
+		if Game.COOKS.values().has(item):
+			Game.warmth = minf(100.0, Game.warmth + Game.COOKED_WARMTH)
 		Game.practice("Survival", 0.5)
 		Audio.play("gear_rustle", null, 0.0, 1.5)
+
+
+## At a campfire: cooks every piece of one raw food you're carrying.
+## Cooking: one piece at a time on a stick held out over the fire. Halfway it
+## needs flipping (E), then it finishes and the next piece goes on, until the
+## raw food runs out. Moving away puts the stick down.
+const COOK_TIME := 4.0
+const FOOD_COLORS := {"Grubs": Color(0.92, 0.85, 0.62), "Mushrooms": Color(0.75, 0.6, 0.45), "Eggs": Color(0.96, 0.94, 0.88),
+	"Fish": Color(0.62, 0.68, 0.72), "Crayfish": Color(0.75, 0.3, 0.2), "Clams": Color(0.7, 0.66, 0.58)}
+var cooking := ""  # the raw food on the stick right now
+var cook_progress := 0.0
+var cook_needs_flip := false
+var _cook_flipped := false
+var _cook_fire: Node3D
+var _cook_stick: Node3D
+var _cook_food: MeshInstance3D
+
+
+func cook(raw: String, fire: Node3D) -> void:
+	if not Game.has_items(raw) or not Game.COOKS.has(raw) or not Game.known.has("cooking"):
+		return
+	cooking = raw
+	_cook_fire = fire
+	cook_progress = 0.0
+	cook_needs_flip = false
+	_cook_flipped = false
+	if _cook_stick == null:
+		_cook_stick = Node3D.new()
+		_cook_stick.top_level = true
+		add_child(_cook_stick)
+		var wood := MeshKit.part(_cook_stick, MeshKit.cyl(0.012, 0.016, 1.0, 5), MeshKit.mat(Color(0.45, 0.33, 0.2)), Vector3(0, 0, -0.5), Vector3(PI / 2, 0, 0))
+		wood.name = "Wood"
+		_cook_food = MeshKit.part(_cook_stick, MeshKit.sphere(0.06, 0.1, 7, 4), MeshKit.mat(Color.WHITE, 0.6), Vector3(0, 0, -0.95))
+	(_cook_food.material_override as StandardMaterial3D).albedo_color = FOOD_COLORS.get(raw, Color(0.8, 0.7, 0.5))
+	_cook_food.rotation = Vector3.ZERO
+	_cook_stick.visible = true
+	Audio.play("gear_rustle", null, -6.0)
+
+
+func stop_cooking(line := "") -> void:
+	cooking = ""
+	cook_needs_flip = false
+	if _cook_stick:
+		_cook_stick.visible = false
+	if _punch_arm:
+		_punch_arm.amount = 0.0
+	if line != "":
+		says.emit([line])
+
+
+func _update_cooking(delta: float) -> void:
+	if cooking == "":
+		return
+	var moving := Input.get_vector("move_left", "move_right", "move_forward", "move_back").length() > 0.3
+	if not is_instance_valid(_cook_fire) or _cook_fire.global_position.distance_to(global_position) > 3.2 or moving or not alive:
+		stop_cooking()
+		return
+	# Arm out, stick pointing down into the flames.
+	var tip := _cook_fire.global_position + Vector3.UP * 0.45
+	var hand := _chest() + (tip - _chest()).normalized() * 0.45 + Vector3.DOWN * 0.1
+	if _punch_arm:
+		_punch_arm.left = false
+		_punch_arm.amount = 0.85
+		_punch_arm.target = hand + (tip - hand).normalized() * 0.3
+	_cook_stick.global_position = hand
+	_cook_stick.look_at(tip, Vector3.UP)
+	_cook_stick.scale = Vector3(1, 1, clampf(hand.distance_to(tip), 0.6, 1.6))
+	_cook_food.scale = Vector3(1, 1, 1.0 / _cook_stick.scale.z)  # stays round on the stretched stick
+	if cook_needs_flip:
+		if Input.is_action_just_pressed("interact"):
+			cook_needs_flip = false
+			_cook_flipped = true
+			_cook_food.rotation.x += PI
+			Audio.play("elem_fire", null, -16.0, 0.8)
+		return
+	cook_progress += delta / COOK_TIME
+	# Browns as it cooks.
+	var base: Color = FOOD_COLORS.get(cooking, Color(0.8, 0.7, 0.5))
+	(_cook_food.material_override as StandardMaterial3D).albedo_color = base.lerp(Color(0.5, 0.3, 0.14), cook_progress * 0.7)
+	if cook_progress >= 0.5 and not _cook_flipped:
+		cook_needs_flip = true
+		return
+	if cook_progress >= 1.0:
+		var raw := cooking
+		var cooked: String = Game.COOKS[raw]
+		Game.take_items(raw, 1)
+		Game.add_item(cooked, 1)
+		Game.practice("Firecraft", 1.5)
+		Audio.play("elem_fire", null, -14.0, 0.7)
+		Game.notify("Sizzle... +1 %s" % cooked, Color(1.0, 0.75, 0.45))
+		if Game.has_items(raw):
+			cook(raw, _cook_fire)
+		else:
+			stop_cooking()
+
+
+## Sitting down facing `toward` (by the fire) and getting back up.
+func sit_facing(toward: Vector3) -> void:
+	frozen = true
+	var to := toward - global_position
+	_sit_forward = Vector3(to.x, 0.0, to.z).normalized()
+	_sitting = true
+	var facing := atan2(-to.x, -to.z)
+	_legs.rotation.y = facing
+	_torso.rotation.y = facing
+	_yaw = facing  # camera over his shoulder, into the fire
+	_pitch = -0.22
+	if _rig:
+		_rig.rotation.y = facing
+		_rig.play("sit", 1.0, 0.5)
+
+
+func stand_up() -> void:
+	frozen = false
+	_sitting = false
+	if _rig:
+		_rig.play("idle", 1.0, 0.5)
 
 
 func drink_canteen() -> void:
@@ -765,6 +1166,21 @@ func _can_afford(id: String) -> bool:
 	return true
 
 
+## Makes something you carry (the map) from what's in your pockets.
+func make(id: String) -> void:
+	var entry: Dictionary = Game.KNOW_HOW[id]
+	for item in entry.needs:
+		if not Game.has_items(item, entry.needs[item]):
+			return
+	for item in entry.needs:
+		Game.take_items(item, entry.needs[item])
+	Game.backpack.append(entry.name)
+	Game.practice("Survival", 3.0)
+	Audio.play("gear_rustle", null, -4.0, 0.7)
+	if id == "map":
+		says.emit(["Charcoal on bark... there. Everywhere we've been so far.", "(Press M to look at the map.)"])
+
+
 func _build(id: String, spot: Vector3, yaw: float) -> void:
 	var needs: Dictionary = Game.KNOW_HOW[id].needs
 	for item in needs:
@@ -776,6 +1192,12 @@ func _build(id: String, spot: Vector3, yaw: float) -> void:
 		"lean_to":
 			Shelter.build(get_parent(), spot, yaw)
 			Game.practice("Woodcraft", 6.0)
+		"torch_post":
+			TorchPost.build(get_parent(), spot)
+			Game.practice("Firecraft", 3.0)
+		"rain_catcher":
+			RainCatcher.build(get_parent(), spot).rotation.y = yaw
+			Game.practice("Survival", 3.0)
 	Audio.play("nova", spot, -8.0, 0.6)
 
 
@@ -836,23 +1258,32 @@ func _aim_flat() -> Vector3:
 ## looks back at him from the front; control returns once he's on his feet.
 func begin_wake(facing: float) -> void:
 	frozen = true
+	_waking = true
 	_legs.rotation.y = facing
 	_torso.rotation.y = facing
 	_yaw = facing + PI
 	_pitch = -0.28
 	if _rig:
 		_rig.rotation.y = facing
+		_rig.current = ""  # restart it even if it was held on a frame
 		_rig.play("getting_up", 0.8, 0.0)
-		_rig.finished.connect(func(state: String):
-			if state == "getting_up":
-				_end_wake()
-		)
+		if not _rig.finished.is_connected(_on_rig_finished):
+			_rig.finished.connect(_on_rig_finished)
 	get_tree().create_timer(12.0).timeout.connect(_end_wake)  # safety net
 
 
+var _waking := false
+
+
+func _on_rig_finished(state: String) -> void:
+	if state == "getting_up":
+		_end_wake()
+
+
 func _end_wake() -> void:
-	if not frozen:
+	if not _waking:
 		return
+	_waking = false
 	frozen = false
 	if _rig:
 		_rig.play("idle", 1.0, 0.4)
@@ -893,7 +1324,7 @@ func _pick_up_focused() -> void:
 		LootDrop.spawn(get_parent(), weapon, spot, false)
 	equip(new_weapon)
 	Audio.play("equip")
-	Game.notify("Equipped %s" % new_weapon.display_name, new_weapon.color)
+	Game.notify("In hand: %s" % new_weapon.display_name, new_weapon.color)
 
 
 # --- Visuals -----------------------------------------------------------------
@@ -1077,6 +1508,8 @@ func _attach_rig() -> void:
 	_rig.skeleton.add_child(_twist)
 	_punch_arm = PunchArm.new()
 	_rig.skeleton.add_child(_punch_arm)
+	_cross_legs = CrossLegs.new()
+	_rig.skeleton.add_child(_cross_legs)
 	# Hold the gun in front of the chest, where the aiming pose puts the hands.
 	_gun_socket.position = Vector3(0.12, 1.38, -0.42) - Vector3(0, TORSO_HEIGHT, 0)
 	_rig.play("idle")
@@ -1113,3 +1546,61 @@ func _limb(hip: Vector3, size: Vector3, material: Material) -> Node3D:
 	_legs.add_child(pivot)
 	MeshKit.part(pivot, MeshKit.box(size), material, Vector3(0, -size.y * 0.5, 0))
 	return pivot
+
+
+# --- Sitting by the fire -------------------------------------------------------
+
+## Sits down on the ground beside `fire`, facing it; the pets come and join.
+func sit_by_fire(fire: Node3D) -> void:
+	var c := fire.global_position
+	var from := global_position - c
+	from.y = 0.0
+	from = from.normalized() if from.length() > 0.1 else Vector3.BACK
+	var spot := c + from * 1.8
+	spot.y = Game.ground_at(spot.x, spot.z)
+	create_tween().tween_property(self, "global_position", spot, 0.35)
+	sit_facing(c)
+	seated = true
+	_getting_up = false
+	_seat_fire = fire
+	var angle := atan2(from.z, from.x)
+	var offset := 1.25
+	for comp in get_tree().get_nodes_in_group("companions"):
+		var pet := comp as Companion
+		if pet.state == Companion.State.FOLLOWING and pet.body.global_position.distance_to(c) < 20.0:
+			pet.sit_by_fire(fire, angle + offset)
+			offset = -offset
+
+
+func _update_seated() -> void:
+	if _getting_up:
+		return
+	if Input.is_action_just_pressed("interact") and is_instance_valid(_seat_fire) and cooking == "":
+		fire_requested.emit(_seat_fire)
+		return
+	var moving := Input.get_vector("move_left", "move_right", "move_forward", "move_back").length() > 0.3
+	if moving or Input.is_action_just_pressed("jump"):
+		get_up()
+
+
+## Gets up off the ground (plays the getting-up motion), then can move again.
+func get_up() -> void:
+	if not seated or _getting_up:
+		return
+	_getting_up = true
+	var done := func():
+		if not seated:
+			return
+		seated = false
+		_getting_up = false
+		stand_up()
+		stood_up.emit()
+		for comp in get_tree().get_nodes_in_group("companions"):
+			if (comp as Companion)._sitting_fire:
+				comp.follow()
+	# Uncross, push up, and stand: the cross-legged pose eases out as the idle
+	# stance blends in.
+	_sitting = false
+	if _rig:
+		_rig.play("idle", 1.0, 0.8)
+	get_tree().create_timer(0.8).timeout.connect(done)

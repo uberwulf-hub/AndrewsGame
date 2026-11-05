@@ -39,6 +39,36 @@ static func covers(tree: SceneTree, pos: Vector3) -> bool:
 func _ready() -> void:
 	add_to_group("shelters")
 	_shape(self, MeshKit.mat(Color(0.36, 0.26, 0.17), 0.95), MeshKit.mat(Color(0.42, 0.31, 0.2), 0.95), MeshKit.mat(Color(0.22, 0.42, 0.18), 0.9))
+	_solid()
+
+
+## Solid roof and uprights, so you can't walk through it; the open front
+## stays open to tuck in at.
+func _solid() -> void:
+	var body := StaticBody3D.new()
+	add_child(body)
+	var roof := CollisionShape3D.new()
+	var slab := BoxShape3D.new()
+	slab.size = Vector3(WIDTH + 0.2, 0.15, Vector2(DEPTH, HEIGHT).length() + 0.2)
+	roof.shape = slab
+	roof.position = Vector3(0, HEIGHT * 0.5, -DEPTH * 0.5)
+	roof.rotation.x = -atan2(HEIGHT, DEPTH)  # along the slope, ridge to ground
+	body.add_child(roof)
+	# The roof's gentle enough to walk up, so the back half is walled off tall.
+	var back := CollisionShape3D.new()
+	var block := BoxShape3D.new()
+	block.size = Vector3(WIDTH + 0.2, 2.2, DEPTH * 0.6)
+	back.shape = block
+	back.position = Vector3(0, 1.1, -DEPTH * 0.7)
+	body.add_child(back)
+	for side in [-1.0, 1.0]:
+		var pole := CollisionShape3D.new()
+		var cyl := CylinderShape3D.new()
+		cyl.radius = 0.08
+		cyl.height = HEIGHT
+		pole.shape = cyl
+		pole.position = Vector3(side * WIDTH * 0.5, HEIGHT * 0.5, 0)
+		body.add_child(pole)
 
 
 static func _shape(parent: Node3D, poles: Material, sticks: Material, ferns: Material) -> void:

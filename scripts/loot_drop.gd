@@ -1,6 +1,7 @@
 class_name LootDrop
 extends Area3D
-## A weapon lying in the world: spinning model, rarity-colored light beam and name tag.
+## A dream tool lying in the world: slowly turning, softly lit, with a name tag
+## (and a faint shaft of light for the rarer ones).
 ## Tells the player when they are in pickup range.
 
 var weapon: WeaponData
@@ -34,15 +35,17 @@ func _ready() -> void:
 	_model.scale = Vector3.ONE * 1.4
 	add_child(_model)
 
-	var beam_height := 3.0 + weapon.rarity * 1.5
-	var beam := MeshKit.part(self, MeshKit.cyl(0.03, 0.12, beam_height, 8),
-		MeshKit.glow(Color(color, 0.35), 3.0, true), Vector3(0, beam_height * 0.5, 0))
-	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Only the rarer finds get a faint shaft of light; plain ones just glow.
+	if weapon.rarity >= 2:
+		var beam_height := 1.0 + weapon.rarity * 0.6
+		var beam := MeshKit.part(self, MeshKit.cyl(0.01, 0.06, beam_height, 8),
+			MeshKit.glow(Color(color, 0.12), 0.7, true), Vector3(0, beam_height * 0.5, 0))
+		beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	var light := OmniLight3D.new()
-	light.light_color = color
-	light.light_energy = 1.5
-	light.omni_range = 4.0
+	light.light_color = color.lerp(Color(1.0, 0.9, 0.7), 0.5)
+	light.light_energy = 0.8
+	light.omni_range = 3.0
 	light.position.y = 1.0
 	add_child(light)
 
@@ -62,8 +65,8 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_t += delta
-	_model.rotation.y += delta * 1.5
-	_model.position.y = 0.8 + sin(_t * 2.0) * 0.12
+	_model.rotation.y += delta * 0.6
+	_model.position.y = 0.8 + sin(_t * 1.2) * 0.06
 
 
 func _on_body_entered(body: Node3D) -> void:

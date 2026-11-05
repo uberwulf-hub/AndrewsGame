@@ -1,21 +1,29 @@
 class_name WeaponData
 extends RefCounted
-## A generated weapon: archetype base stats scaled by item level and rarity, an
-## optional element, and rarity-dependent perks.
+## A generated dream tool (wand, sling, horn, jar of fireflies, moonbow):
+## archetype base stats scaled by item level and rarity, an optional element,
+## and rarity-dependent perks. The archetype keys are the old internal names;
+## `kind` is what the player sees.
 
 enum Element { KINETIC, FIRE, SHOCK, FROST }
 
 const RARITY_NAMES := ["Common", "Uncommon", "Rare", "Epic", "Mythic"]
 const RARITY_COLORS := [Color(0.82, 0.82, 0.82), Color(0.35, 0.9, 0.4), Color(0.3, 0.6, 1.0), Color(0.75, 0.35, 1.0), Color(1.0, 0.62, 0.15)]
 const RARITY_WEIGHTS := [55.0, 26.0, 12.0, 5.5, 1.5]
-const ELEMENT_NAMES := ["Kinetic", "Fire", "Shock", "Frost"]
+const ELEMENT_NAMES := ["Wild", "Ember", "Storm", "Frost"]
 const ELEMENT_COLORS := [Color(1.0, 0.85, 0.55), Color(1.0, 0.42, 0.12), Color(0.6, 0.55, 1.0), Color(0.5, 1.0, 0.95)]
 const ELEMENT_DESCRIPTIONS := [
 	"",
-	"Fire: hits ignite enemies, burning them over 3s",
-	"Shock: hits arc to a nearby enemy for 50% damage",
-	"Frost: hits slow enemies by 50%",
+	"Ember: hits set foes smouldering for 3s",
+	"Storm: hits leap to a nearby foe for 50% damage",
+	"Frost: hits slow foes by 50%",
 ]
+
+## What each archetype is in the dream.
+const KINDS := {
+	"Rifle": "Wisp Wand", "Hand Cannon": "Oak Sling", "Scattergun": "Seed Horn",
+	"Rune SMG": "Firefly Jar", "Sky Lance": "Moonbow",
+}
 
 const ARCHETYPES := {
 	"Rifle": {"damage": 14.0, "fire_rate": 8.0, "mag": 30, "reload": 1.8, "spread": 0.012, "pellets": 1, "auto": true, "crit": 0.05},
@@ -26,22 +34,22 @@ const ARCHETYPES := {
 }
 
 const PERKS := {
-	"explosive": "Explosive Rounds: hits burst for 40% damage nearby",
-	"vampiric": "Bloodrune: hits heal 3% of damage dealt",
-	"overcharge": "Overcharge: kills cut Nova cooldown by 2s",
-	"keen": "Keen Edge: +15% crit chance",
-	"deep_mag": "Deep Magazine: +50% magazine size",
-	"executioner": "Executioner: +60% damage to enemies below 30% health",
-	"momentum": "Momentum: kills grant +30% fire rate for 4s",
+	"explosive": "Puffball: hits pop for 40% damage nearby",
+	"vampiric": "Heartsap: hits heal 3% of damage dealt",
+	"overcharge": "Quickbloom: wins cut Bloom's wait by 2s",
+	"keen": "True Aim: +15% crit chance",
+	"deep_mag": "Deep Pouch: +50% shots before refilling",
+	"executioner": "Last Light: +60% damage to foes below 30% health",
+	"momentum": "Tailwind: wins quicken your shots 30% for 4s",
 }
 
 const NAME_PREFIXES := [
-	["Ironclad", "Runebound", "Old-World", "Gearsworn"],
-	["Emberwrought", "Sunforged", "Cinder", "Pyre"],
-	["Stormcall", "Thunderwright", "Voltaic", "Skyfork"],
-	["Rimeglass", "Winterborn", "Glacial", "Hoarfrost"],
+	["Mossy", "Rootbound", "Old-Wood", "Willow"],
+	["Ember", "Sunlit", "Hearth", "Fox-Fire"],
+	["Stormcall", "Thunder", "Skyfork", "Rainsong"],
+	["Rimeglass", "Winter", "Snowberry", "Hoarfrost"],
 ]
-const MYTHIC_SUFFIXES := ["of the Last Titan", "of the Hollow Sun", "of the First Engine", "of the Nine Gates"]
+const MYTHIC_SUFFIXES := ["of the Great Tree", "of the Hollow Moon", "of the First Dream", "of the Nine Groves"]
 
 var archetype := "Rifle"
 var display_name := ""
@@ -57,6 +65,10 @@ var pellets := 1
 var automatic := false
 var crit_chance := 0.05
 var perks: Array[String] = []
+
+var kind: String:
+	get:
+		return KINDS.get(archetype, archetype)
 
 var color: Color:
 	get:
@@ -119,7 +131,7 @@ static func generate(item_level: int, rng: RandomNumberGenerator, rarity_bonus :
 		w.crit_chance += 0.15
 
 	var prefixes: Array = NAME_PREFIXES[w.element]
-	w.display_name = "%s %s" % [prefixes[rng.randi() % prefixes.size()], w.archetype]
+	w.display_name = "%s %s" % [prefixes[rng.randi() % prefixes.size()], w.kind]
 	if w.rarity == 4:
 		w.display_name += " " + MYTHIC_SUFFIXES[rng.randi() % MYTHIC_SUFFIXES.size()]
 	return w

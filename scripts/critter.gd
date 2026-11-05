@@ -11,6 +11,24 @@ var _tail: Node3D
 var _rig: CharacterRig  # animated model from models/<name>, when there is one
 var _last_pos := Vector3.ZERO
 var _speed := 0.0
+## In the water (the companion sets these): the Fox dog-paddles nose-up, the
+## Otter undulates, rolls onto his back to float when he stops, and tips nose
+## down when he dives (`dive` is how fast he's heading down, -1..1).
+var swimming := false
+var dive := 0.0
+var _back := 0.0  # 0 belly down, 1 floating on his back
+var _shake := 0.0  # seconds left of shaking off water
+var _wet := 0.0
+var _wet_mat: StandardMaterial3D
+## Lying down for a rest: the Fox on his side, the Otter flat on his back.
+var lounging := false
+var _bob := 0.0  # the little trot bounce, kept apart from the roll's lift
+var _lounge := 0.0
+## The Fox lying on his side: how far over he rolls, how high the middle of
+## his body is when standing, and how high it sits once he's lying down.
+const LIE_ROLL := 1.45
+const LIE_MIDDLE := 0.32
+const LIE_SIDE := 0.13
 
 
 static func fox() -> Critter:
@@ -75,22 +93,81 @@ func _make_body() -> Node3D:
 
 func _process(delta: float) -> void:
 	_t += delta
+	var smooth := 1.0 - exp(-6.0 * delta)
+	_shake = maxf(0.0, _shake - delta)
+	var shake_roll := sin(_t * 45.0) * 0.45 * minf(_shake / 0.4, 1.0)
+	var flat := position - _last_pos
+	flat.y = 0.0
+	_last_pos = position
+	_speed = lerpf(_speed, flat.length() / maxf(delta, 0.0001), smooth)
 	if _rig:
-		var speed := (position - _last_pos).length() / maxf(delta, 0.0001)
-		_last_pos = position
-		_speed = lerpf(_speed, speed, 1.0 - exp(-6.0 * delta))
-		if _speed > 2.5:
+		if swimming:
+			# Dog paddle: legs going quick, nose up, whether moving or treading.
+			_rig.play("walk", 1.9 if _speed > 0.3 else 1.2, 0.3)
+			_rig.rotation.x = lerpf(_rig.rotation.x, 0.28, smooth)
+		elif _speed > 2.5:
 			_rig.play("run", clampf(_speed / 5.0, 0.7, 1.5), 0.25)
 		elif _speed > 0.2 or moving:
 			_rig.play("walk", clampf(_speed / 1.4, 0.6, 1.6), 0.25)
 		else:
-			_rig.play("idle", 1.0, 0.4)
+			_rig.play("idle", 0.35 if lounging else 1.0, 0.4)
+		if not swimming:
+			_rig.rotation.x = lerpf(_rig.rotation.x, 0.0, smooth)
+		_lounge = move_toward(_lounge, 1.0 if lounging and not swimming and _speed < 0.2 else 0.0, delta * 2.0)
+		# Tip over around the middle of his body (not his paws), then settle so
+		# his side rests on the ground instead of sinking into it.
+		var lie := smoothstep(0.0, 1.0, _lounge)
+		var roll := LIE_ROLL * lie
+		_rig.rotation.z = shake_roll + roll
+		_rig.position.x = LIE_MIDDLE * sin(roll)
+		_rig.position.y = LIE_MIDDLE - LIE_MIDDLE * cos(roll) - (LIE_MIDDLE - LIE_SIDE) * lie
 		return
-	if moving:
-		_body.position.y = absf(sin(_t * 12.0)) * 0.12
+	var paddling := swimming and (_speed > 0.3 or absf(dive) > 0.1)
+	var resting := lounging and not swimming and _speed < 0.2
+	_back = move_toward(_back, 1.0 if (swimming and not paddling) or resting else 0.0, delta * 1.5)
+	var roll := PI * smoothstep(0.0, 1.0, _back)
+	if swimming:
+		# Swimming like a little torpedo: the whole body ripples, the tail sculls.
+		_body.rotation.x = lerpf(_body.rotation.x, (sin(_t * 7.0) * 0.12 - dive * 0.7) if paddling else 0.0, smooth)
+		_tail.rotation.x = sin(_t * 7.0) * 0.4
+		_bob = 0.0
+	elif moving:
+		_bob = absf(sin(_t * 12.0)) * 0.12
 	else:
-		_body.position.y = lerpf(_body.position.y, 0.0, 1.0 - exp(-10.0 * delta))
+		_bob = lerpf(_bob, 0.0, 1.0 - exp(-10.0 * delta))
+	_body.position.y = _bob
+	if not swimming:
+		_body.rotation.x = lerpf(_body.rotation.x, 0.0, smooth)
+		_tail.rotation.x = lerpf(_tail.rotation.x, 0.0, smooth)
+	# Rolling over keeps the middle of the body (0.24 up) where it was.
+	_body.rotation.z = roll + shake_roll
+	_body.position.x = 0.24 * sin(roll)
+	_body.position.y += 0.24 - 0.24 * cos(roll)
 	_tail.rotation.y = sin(_t * (10.0 if moving else 3.0)) * 0.4
+
+
+## A big full-body shake to fling the water off.
+func shake_off() -> void:
+	_shake = 0.9
+
+
+## Soaked fur looks darker and glossy; `amount` 0..1 dries it back out.
+func set_wet(amount: float) -> void:
+	if absf(amount - _wet) < 0.03 and (amount > 0.0 or _wet == 0.0):
+		return
+	if _wet_mat == null:
+		_wet_mat = StandardMaterial3D.new()
+		_wet_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_wet_mat.albedo_color = Color(0.03, 0.04, 0.06, 0.0)
+		_wet_mat.roughness = 0.08
+		_wet_mat.metallic_specular = 1.0
+	var was_dry := _wet == 0.0
+	_wet = amount
+	_wet_mat.albedo_color.a = 0.42 * amount
+	if was_dry != (amount == 0.0):
+		for m in find_children("*", "MeshInstance3D", true, false):
+			if not m.is_in_group("soot"):
+				(m as MeshInstance3D).material_overlay = _wet_mat if amount > 0.0 else null
 
 
 func face(target: Vector3, duration := 0.25) -> void:
