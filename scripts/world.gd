@@ -1769,6 +1769,40 @@ func _deepest_point() -> Vector3:
 
 func _take_screenshot() -> void:
 	await get_tree().create_timer(Game.screenshot_delay).timeout
+	if Game.shot_pets_eat:
+		# Hungry pets: they snack on food lying nearby, then eat their own
+		# find instead of bringing it back; a fed pet still brings his back.
+		var pl := Game.player
+		pl._end_wake()
+		await get_tree().create_timer(36.0).timeout  # through the opening lines
+		for c in [_fox, _otter]:
+			if c._zzz:
+				c._zzz.queue_free()
+			c.body.rotation.z = 0.0
+			c.follow()
+			c._forage_timer = 999.0
+			c.hunger = 20.0
+		var at := pl.global_position + Vector3(4.0, 0, 1.0)
+		var grubs := Gatherable.spawn(self, Vector3(at.x, Game.ground_at(at.x, at.z), at.z), "grubs", _rng)
+		var at2 := pl.global_position + Vector3(-3.0, 0, 3.0)
+		var clams := Gatherable.spawn(self, Vector3(at2.x, Game.ground_at(at2.x, at2.z), at2.z), "clams", _rng)
+		await get_tree().create_timer(12.0).timeout
+		print("snacks: fox hunger %.0f, otter hunger %.0f, grubs left %s, clams left %s" % [_fox.hunger, _otter.hunger, is_instance_valid(grubs), is_instance_valid(clams)])
+		var count_food := func() -> int:
+			return get_tree().get_nodes_in_group("gatherables").filter(func(g): return Companion.SNACK_KINDS.has(g.kind)).size()
+		_fox.hunger = 20.0
+		var before: int = count_food.call()
+		_fox._start_run(pl, false)
+		await get_tree().create_timer(16.0).timeout
+		print("hungry run: fox hunger %.0f, food on ground %d -> %d, state %d" % [_fox.hunger, before, count_food.call(), _fox.state])
+		_fox.hunger = 90.0
+		_otter.hunger = 90.0
+		before = count_food.call()
+		_fox._start_run(pl, false)
+		await get_tree().create_timer(16.0).timeout
+		print("fed run: fox hunger %.0f, food on ground %d -> %d" % [_fox.hunger, before, count_food.call()])
+		get_tree().quit()
+		return
 	if Game.shot_wisps:
 		# Stand by the altar and shoot each stone's sleepy light: before the
 		# echo they only stir, after it they wake one by one.

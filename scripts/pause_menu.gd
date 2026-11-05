@@ -1,6 +1,7 @@
 class_name PauseMenu
 extends CanvasLayer
 ## Esc pauses the game: Resume, Options (volume, fullscreen), Main Menu, Quit.
+## It also pauses by itself after a few minutes without any input.
 
 const TITLE_SCENE := "res://scenes/title.tscn"
 const CREAM := Color(0.97, 0.9, 0.74)
@@ -153,3 +154,28 @@ func _save() -> void:
 		Audio.play("ui_notify", null, -8.0, 1.1)
 	else:
 		_saved_label.text = "Couldn't save just now."
+
+
+# --- Away from the keyboard ----------------------------------------------------
+# No input for a few minutes and the game pauses itself, so nobody starves
+# (or freezes) while you're off making a sandwich.
+
+const AFK_SECONDS := 180.0
+var _idle := 0.0
+
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey or event is InputEventMouseButton or event is InputEventMouseMotion \
+			or event is InputEventJoypadButton or event is InputEventJoypadMotion:
+		_idle = 0.0
+
+
+func _process(delta: float) -> void:
+	if get_tree().paused or Game.screenshot_mode:
+		_idle = 0.0
+		return
+	_idle += delta
+	if _idle > AFK_SECONDS:
+		_idle = 0.0
+		open()
+		_saved_label.text = "Paused while you were away."

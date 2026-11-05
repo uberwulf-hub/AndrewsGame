@@ -85,6 +85,8 @@ var _run := Run.GOING
 var _run_spot := Vector3.ZERO
 var _run_time := 0.0
 var _find: Array = []
+var _snack: Gatherable  # food on the ground he's trotting over to eat, when hungry
+var _snacking := false  # this run is a snack run (the snack itself may be gone by now)
 var _shove := Vector3.ZERO  # a hop back out of a fire
 ## Only for tests: walks straight into fires (pets normally steer around them).
 var _careless := false
@@ -207,6 +209,11 @@ func _process(delta: float) -> void:
 		_forage_timer -= delta
 		if _forage_timer <= 0.0:
 			_start_run(player)
+		_snack_check -= delta
+		if _snack_check <= 0.0:
+			_snack_check = 4.0
+			if hunger < SNACK_BELOW and _go_snack():
+				return
 	var to_player := player.global_position - body.position
 	to_player.y = 0.0
 	var dist := to_player.length()
@@ -466,6 +473,8 @@ func _forage(delta: float, player: Player) -> void:
 				body.position += dir * minf(4.5 * delta, step.length())
 				body.rotation.y = lerp_angle(body.rotation.y, atan2(-dir.x, -dir.z), 1.0 - exp(-8.0 * delta))
 				body.moving = true
+			elif _run == Run.GOING and _snack_arrived():
+				return
 			elif _run == Run.GOING:
 				_run = Run.SEARCHING
 				_run_time = 0.0
@@ -497,6 +506,17 @@ func _forage(delta: float, player: Player) -> void:
 
 func _bring_back(player: Player) -> void:
 	body.moving = false
+	if _find.is_empty():
+		state = State.FOLLOWING
+		return
+	if hunger < SNACK_BELOW:
+		# Too hungry to share: finders keepers.
+		_eat(Gatherable.KINDS[_find[0]].item, 2)
+		Game.practice(Game.PET_KNACKS[who], 4.0)
+		say([SELF_FED_LINES[who].pick_random()])
+		state = State.FOLLOWING
+		_since_run = 0.0
+		return
 	var away := body.position - player.global_position
 	away.y = 0.0
 	if away.length() > 4.0:
@@ -654,6 +674,78 @@ func _update_needs(delta: float) -> void:
 		say([HUNGRY_LINES[who].pick_random()])
 
 
+## Eats `count` of a food: fills him up (favorites more) and heals a little.
+## Returns whether it was a favorite.
+func _eat(food: String, count := 1) -> bool:
+	var fav: bool = FAVORITES[who].has(food)
+	hunger = minf(100.0, hunger + Game.FOODS.get(food, 6.0) * count * (3.0 if fav else 2.0))
+	health = minf(100.0, health + 8.0)
+	Audio.play("gear_rustle", body.global_position, -8.0, 1.4)
+	return fav
+
+
+# Feeding themselves: you don't HAVE to feed them. Hungry, a pet eats the next
+# thing he finds instead of bringing it back, and trots over to snack on food
+# lying close by (theirs or anyone's). Handing them food still makes them
+# happiest.
+
+const SNACK_BELOW := 45.0  # hunger under this and he looks after himself
+const SNACK_REACH := 12.0
+const SNACK_KINDS := ["grubs", "mushrooms", "eggs", "fish", "crayfish", "clams"]
+const SELF_FED_LINES := {
+	"fox": ["Finders keepers. A growing fox needs snacks.", "I ate that one. Don't look at me like that. Next one's yours."],
+	"otter": ["Sorry, I was SO hungry I ate it! I'll find you another one!", "Mmm! I saved you... none. Next one's yours, promise!"],
+}
+const SNACK_LINES := {
+	"fox": ["Free snack on the ground. Five-second rule. ...Ish.", "Nobody was eating that. Now somebody is."],
+	"otter": ["Ooh, leftovers! Yum!", "Snack time! Don't worry, I'm only having one."],
+}
+var _snack_check := 4.0
+
+
+## Heads for the nearest food lying close by. False if there's none.
+func _go_snack() -> bool:
+	var best: Gatherable = null
+	var best_d := SNACK_REACH
+	for node in get_tree().get_nodes_in_group("gatherables"):
+		var g := node as Gatherable
+		if not g.available or not SNACK_KINDS.has(g.kind):
+			continue
+		var d := g.global_position.distance_to(body.global_position)
+		if d < best_d:
+			best = g
+			best_d = d
+	if best == null:
+		return false
+	_snack = best
+	_snacking = true
+	_run_spot = best.global_position
+	_run = Run.GOING
+	_run_time = 0.0
+	state = State.FORAGING
+	return true
+
+
+## At the snack (or it's gone): eats it and goes back to following. False
+## when this run isn't a snack, so foraging carries on as usual.
+func _snack_arrived() -> bool:
+	if not _snacking:
+		return false
+	_snacking = false
+	var g = _snack  # untyped: it may have been eaten (freed) already
+	_snack = null
+	body.moving = false
+	state = State.FOLLOWING
+	if is_instance_valid(g) and g.available:
+		_eat(Gatherable.KINDS[g.kind].item, 2)
+		g.queue_free()
+		_hop_v = 3.0
+		say([SNACK_LINES[who].pick_random()])
+	else:
+		_snack_check = 0.5  # beaten to it: look again soon
+	return true
+
+
 ## Food in the backpack to hand over: [label, what happens] for the menu.
 func feed_options() -> Array:
 	var out := []
@@ -668,11 +760,8 @@ func feed_options() -> Array:
 func feed(food: String) -> void:
 	if not Game.take_items(food, 1):
 		return
-	var fav: bool = FAVORITES[who].has(food)
-	hunger = minf(100.0, hunger + Game.FOODS[food] * (3.0 if fav else 2.0))
-	health = minf(100.0, health + 8.0)
+	var fav := _eat(food)
 	_hop_v = 3.0
-	Audio.play("gear_rustle", body.global_position, -8.0, 1.4)
 	var cooked := Game.COOKS.values().has(food)
 	var line: String
 	if who == "fox":
