@@ -588,8 +588,17 @@ func _try_fire() -> void:
 		_fire_ray(muzzle)
 	_recoil += minf(0.01 + 0.02 / weapon.fire_rate, 0.05) * (0.6 if aiming else 1.0)
 	_muzzle_light.light_energy = 5.0
+	if Game.skills.has("Aim"):
+		Game.practice("Aim", 0.25 / weapon.fire_rate)  # by time spent, so quick tools don't level faster
 	if ammo == 0:
 		_start_reload()
+
+
+## Aim (remembered at the heartstone) narrows the spread: up to 60% at the cap.
+func aim_steadiness() -> float:
+	if not Game.skills.has("Aim"):
+		return 1.0
+	return 1.0 - 0.6 * float(Game.skill_level("Aim") - 1) / float(Game.SKILL_MAX - 1)
 
 
 const SHOT_SOUNDS := {
@@ -608,7 +617,7 @@ func _play_shot_sound() -> void:
 func _fire_ray(muzzle: Vector3) -> void:
 	var cam_basis := camera.global_basis
 	var forward := -cam_basis.z
-	var spread := weapon.spread * (0.35 if aiming else 1.0)
+	var spread := weapon.spread * (0.35 if aiming else 1.0) * aim_steadiness()
 	var dir := (forward
 		+ cam_basis.x * Game.rng.randf_range(-spread, spread)
 		+ cam_basis.y * Game.rng.randf_range(-spread, spread)).normalized()

@@ -6,6 +6,11 @@ extends Node3D
 ## with "Wake up." and loads the world. Any key skips.
 ##
 ## Scene timings match the dream score in MusicThemes._dream().
+##
+## Memory Echoes reuse it: with an "echo" meta set, it builds only what that
+## one memory needs, plays it, and emits echo_done instead (see MemoryEcho).
+
+signal echo_done
 
 const NEXT_SCENE := "res://scenes/main.tscn"
 const MEADOW := Vector3(0, 0, 0)
@@ -44,6 +49,7 @@ var _window_lights: Array[OmniLight3D] = []
 var _door: Node3D
 var _circlers: Array = []
 var _leaving := false
+var _echo := ""  # which Memory Echo this is, or "" for the opening dream
 
 var _hero: Figure
 var _mate: Figure
@@ -52,6 +58,16 @@ var _otter: Critter
 
 
 func _ready() -> void:
+	_echo = get_meta("echo", "")
+	if _echo != "":
+		_build_environment()
+		_build_ui()
+		_build_home2()
+		_build_cast()
+		_build_weather()
+		_make_music()
+		_play_echo()
+		return
 	if Game.screenshot_mode and Game.dream_shots.is_empty():
 		get_tree().change_scene_to_file.call_deferred(NEXT_SCENE)
 		return
@@ -66,6 +82,13 @@ func _ready() -> void:
 	_build_home3()
 	_build_cast()
 	_build_weather()
+	_make_music()
+	if Game.screenshot_mode:
+		_schedule_screenshots()
+	_play()
+
+
+func _make_music() -> void:
 	_music = AudioStreamPlayer.new()
 	_music.bus = "Music"
 	_music.volume_db = 8.0
@@ -74,9 +97,6 @@ func _ready() -> void:
 		stream.loop_mode = AudioStreamWAV.LOOP_DISABLED
 		_music.stream = stream
 	add_child(_music)
-	if Game.screenshot_mode:
-		_schedule_screenshots()
-	_play()
 
 
 func _play() -> void:
@@ -315,6 +335,76 @@ func _waking() -> void:
 	await _wait(8.8)
 
 
+# --- Memory Echoes -----------------------------------------------------------
+
+func _play_echo() -> void:
+	match _echo:
+		"aim":
+			await _echo_aim()
+	echo_done.emit()
+
+
+## The second home's yard on a golden afternoon. Pinecones on an old stump,
+## and he shows the Fox and the Otter how to aim: one gentle line, the one
+## thing he always told them. A pinecone tumbles, they bound after it.
+func _echo_aim() -> void:
+	var h := HOME2
+	var stump := h + Vector3(-7.0, 0, 9.4)
+	var hero_at := h + Vector3(-1.6, 0, 9.4)
+	MeshKit.part(self, MeshKit.cyl(0.32, 0.38, 0.55, 9), MeshKit.mat(Color(0.45, 0.32, 0.2)), stump + Vector3(0, 0.275, 0))
+	MeshKit.part(self, MeshKit.cyl(0.3, 0.3, 0.02, 9), MeshKit.mat(Color(0.72, 0.58, 0.4)), stump + Vector3(0, 0.555, 0))
+	var cone_mat := MeshKit.mat(Color(0.5, 0.33, 0.18))
+	var cones: Array[Node3D] = []
+	for k in 3:
+		cones.append(MeshKit.part(self, MeshKit.cyl(0.02, 0.07, 0.17, 7), cone_mat, stump + Vector3(0, 0.65, -0.18 + k * 0.18)))
+	var pebble := MeshKit.part(self, MeshKit.sphere(0.035), MeshKit.glow(Color(1.0, 0.9, 0.65), 2.5), hero_at)
+	pebble.visible = false
+	var fling := func(cone: Node3D, land: Vector3):
+		pebble.position = _hero.position + Vector3(-0.35, 1.45, -0.2)  # his right hand, facing the stump
+		pebble.visible = true
+		Audio.play("shot_cannon", null, -6.0)
+		var tw := create_tween()
+		tw.tween_property(pebble, "position", cone.position, 0.3)
+		tw.tween_callback(func():
+			pebble.visible = false
+			Audio.play("reload_out", null, -4.0, 1.3))
+		tw.set_parallel()
+		tw.tween_property(cone, "position", land, 0.6).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		tw.tween_property(cone, "rotation", Vector3(1.6, 0.4, 2.2), 0.6)
+	await _cut(func():
+		_set_sun(Vector3(-28, -60, 0))
+		_mood("golden", 0.0)
+		_motes.emitting = true
+		_place(_hero, hero_at, PI / 2)  # facing -X, toward the stump
+		_place(_fox, h + Vector3(-1.0, 0, 10.6), PI / 2)
+		_place(_otter, h + Vector3(-0.9, 0, 8.2), PI / 2)
+		_hero.raise_arms(0, 0, 0.01)
+		_shot(h + Vector3(-3.2, 1.5, 16.0), h + Vector3(-4.4, 1.3, 14.4), h + Vector3(-3.4, 0.9, 9.4), h + Vector3(-4.8, 0.8, 9.4), 15.5)
+		_music.play(31.0)
+	)
+	_at(0.8, func(): _say("Steady hands. Breathe out. Let go.", 4.2))
+	_at(1.6, func(): _hero.pose = "aim_idle")
+	_at(4.4, func(): fling.call(cones[1], stump + Vector3(-1.3, 0.08, 0.3)))
+	_at(5.0, func(): _hero.pose = "")
+	_at(5.2, func():
+		_fox.move_to(stump + Vector3(-0.9, 0, 1.0), 1.0)
+		_otter.move_to(stump + Vector3(-0.6, 0, -0.6), 1.4))
+	_at(7.2, func():
+		_otter.move_to(hero_at + Vector3(-0.7, 0, -0.8), 1.8)
+		_fox.move_to(h + Vector3(-2.2, 0, 10.7), 1.7))
+	_at(9.2, func():
+		_otter.face(stump)
+		_fox.face(stump)
+		_hero.pose = "aim_idle")
+	_at(11.4, func(): fling.call(cones[0], stump + Vector3(-1.1, 0.08, -0.7)))
+	_at(12.0, func(): _hero.pose = "")
+	_at(12.0, func(): _fox.move_to(stump + Vector3(-0.8, 0, -0.9), 0.9))
+	_at(12.8, func():
+		_fade_to(1.0, 2.6)
+		create_tween().tween_property(_music, "volume_db", -40.0, 2.8))
+	await _wait(15.6)
+
+
 # --- Direction helpers -------------------------------------------------------
 
 func _process(_delta: float) -> void:
@@ -469,7 +559,7 @@ func _stop_circling() -> void:
 # --- Skipping & ending -------------------------------------------------------
 
 func _unhandled_input(event: InputEvent) -> void:
-	if _leaving or Game.screenshot_mode:
+	if _leaving or Game.screenshot_mode or _echo != "":  # an echo's skipping is MemoryEcho's job
 		return
 	var key := event is InputEventKey and event.is_pressed() and not event.is_echo()
 	var click := event is InputEventMouseButton and event.is_pressed()

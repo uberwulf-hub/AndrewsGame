@@ -68,7 +68,7 @@ func refresh() -> void:
 		_bar(_left, "Food", Game.hunger / 100.0, Color(0.6, 0.85, 0.35))
 		_bar(_left, "Water", Game.thirst / 100.0, Color(0.4, 0.7, 1.0))
 	_heading(_left, "Skills", 22)
-	for skill in Game.SKILLS:
+	for skill in Game.SKILLS + Game.REMEMBERED_SKILLS.filter(func(s): return Game.skills.has(s)):
 		_skill_bar(skill, skill, Color(0.75, 0.6, 1.0))
 	if Game.story_start:
 		_heading(_left, "Fox & Otter", 22)

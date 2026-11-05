@@ -106,6 +106,8 @@ var head: Node3D
 
 var _move_tween: Tween
 var _rig: CharacterRig  # set when this figure uses a rigged model
+## A rig animation to hold while standing still (say "aim_idle"), or "" for idle.
+var pose := ""
 var _last_pos := Vector3.ZERO
 var _speed := 0.0
 var _stride := 0.0
@@ -435,7 +437,8 @@ func _process(delta: float) -> void:
 		elif _speed > 0.25 or walking:
 			_rig.play("walk", clampf(_speed / 1.2, 0.6, 1.3), 0.3)
 		else:
-			_rig.play("idle", 1.0, 0.3)
+			if pose == "" or not _rig.play(pose, 1.0, 0.3):
+				_rig.play("idle", 1.0, 0.3)
 		return
 	_stride = lerpf(_stride, 1.0 if walking else 0.0, 1.0 - exp(-8.0 * delta))
 	_phase += delta * walk_speed * _stride

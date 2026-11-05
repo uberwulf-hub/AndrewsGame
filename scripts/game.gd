@@ -38,6 +38,8 @@ signal skill_leveled(skill: String, level: int)
 const ENEMIES_ENABLED := false  # hostile camps are off while the opening is built
 const SKILLS := ["Foraging", "Woodcraft", "Firecraft", "Survival", "Swimming"]
 const SKILL_MAX := 50
+## Skills that come back through Memory Echoes; they show once remembered.
+const REMEMBERED_SKILLS := ["Aim"]
 
 ## What each food is worth when eaten, out of 100 hunger.
 const FOODS := {
@@ -285,6 +287,7 @@ var shot_save := false
 var shot_ring := false
 var shot_map := false
 var shot_tools := false
+var shot_echo := false
 var shot_save_loaded := false
 var shot_help := false
 
@@ -454,6 +457,8 @@ func _parse_args() -> void:
 			"--shot-birds":
 				shot_birds = true
 				story_start = true
+			"--shot-echo":
+				shot_echo = true
 			"--shot-tools":
 				shot_tools = true
 			"--shot-map":

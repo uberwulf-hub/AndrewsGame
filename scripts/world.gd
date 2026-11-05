@@ -9,7 +9,7 @@ const WATER_LEVEL := -1.2  # keep in sync with Game.WATER_LEVEL
 var _rng := RandomNumberGenerator.new()
 var _camps: Array[Dictionary] = []
 var _camp_check := 0.0
-var _crystal: Node3D
+var _crystal: Heartstone
 var _stone_mats: Array[StandardMaterial3D] = []
 var _leaf_mats: Array[StandardMaterial3D] = []
 var _bark: StandardMaterial3D
@@ -105,6 +105,8 @@ func _ready() -> void:
 const WAKE_DISTANCE := 95.0
 var _sanctum_found := false
 var _hum_timer := 3.0
+## Memory Echoes already relived, by name ("aim", ...).
+var _echoes: Array[String] = []
 
 
 ## A meadow spot well out from the Sanctum on dry, gentle ground.
@@ -207,6 +209,7 @@ func save_game() -> bool:
 		"settled": _settled,
 		"night_passed": _night_passed,
 		"sanctum_found": _sanctum_found,
+		"echoes": Array(_echoes),
 		"food_at_start": _food_at_start,
 		"cooking_hinted": _cooking_hinted,
 		"fox": [_fox._tips_given, _fox._feelings],
@@ -240,6 +243,7 @@ func _resume(player: Player, hud: Hud, data: Dictionary) -> void:
 	_settled = s.settled
 	_night_passed = s.night_passed
 	_sanctum_found = s.sanctum_found
+	_echoes.assign(s.get("echoes", []))
 	_food_at_start = s.food_at_start
 	_cooking_hinted = s.cooking_hinted
 	var right := Basis(Vector3.UP, player._yaw) * Vector3.RIGHT
@@ -541,14 +545,83 @@ func _update_story(delta: float) -> void:
 				Audio.play("ui_notify", null, lerpf(-4.0, -14.0, clampf(dist / 120.0, 0.0, 1.0)), 1.9)
 	elif p.weapon and not Game.quest("sanctum").is_empty():
 		Game.complete_quest("sanctum")
-		Game.start_quest("family", "Finding Home", ["Find out what happened to your family"])
+		Game.start_quest("family", "Finding Home", ["Touch the heartstone (E at the altar)", "Find out what happened to your family"])
+		get_tree().create_timer(6.0).timeout.connect(func():
+			if _heartstone_ready() and _otter:
+				_otter.say(["That little stone on the altar keeps glowing at you.", "Like it wants to say hi. Go on, touch it!"]))
+
+
+# --- Memory Echoes -------------------------------------------------------------
+# The heartstone gives back one memory of the dream: a short scene, then a
+# skill remembered. Later ones will wait at other old stones.
+
+var _echo_playing := false
+
+
+func _heartstone_ready() -> bool:
+	var p := Game.player
+	return not _echo_playing and not _echoes.has("aim") and p != null and p.weapon != null \
+		and not Game.quest("family").is_empty()
+
+
+func _update_heartstone() -> void:
+	var ready := _heartstone_ready()
+	if ready != _crystal.is_in_group("usables"):
+		if ready:
+			_crystal.add_to_group("usables")
+		else:
+			_crystal.remove_from_group("usables")
+
+
+func _on_heartstone_touched() -> void:
+	if not _heartstone_ready():
+		return
+	play_echo("aim")
+
+
+func play_echo(which: String) -> void:
+	_echo_playing = true
+	var p := Game.player
+	p.frozen = true
+	Audio.play("level_up", null, -10.0, 0.7)
+	var flare := create_tween()
+	flare.tween_property(_crystal.get_child(1), "omni_range", 16.0, 1.4)
+	flare.tween_property(_crystal.get_child(1), "omni_range", 7.0, 2.0).set_delay(16.0)
+	create_tween().tween_property(Audio, "dim", 0.0, 1.5)
+	MemoryEcho.play(self, which).finished.connect(_after_echo.bind(which))
+
+
+func _after_echo(_skipped: bool, which: String) -> void:
+	_echo_playing = false
+	_echoes.append(which)
+	Game.player.frozen = false
+	create_tween().tween_property(Audio, "dim", 1.0, 3.0)
+	match which:
+		"aim":
+			Game.skills["Aim"] = Game.skills.get("Aim", 0.0)
+			Game.notify("A memory comes back to you: Aim", Color(1.0, 0.9, 0.6))
+			get_tree().create_timer(2.5).timeout.connect(func():
+				Game.notify("Your dream tools fly truer the more you use them.", Color(0.85, 0.85, 0.75)))
+			var q := Game.quest("family")
+			for i in q.get("steps", []).size():
+				if (q.steps[i].text as String).begins_with("Touch the heartstone"):
+					Game.set_step("family", i, "Touch the heartstone", true)
+			if _otter and _fox:
+				get_tree().create_timer(3.5).timeout.connect(func():
+					_otter.say(["You went all quiet and glowy for a second.", "Are you okay? You were smiling."]))
+				get_tree().create_timer(10.0).timeout.connect(func():
+					_fox.say(["\"Steady hands. Breathe out. Let go.\"", "...Huh. Why do I know that one?"]))
+	get_tree().create_timer(12.0).timeout.connect(_autosave)
 
 
 func _process(delta: float) -> void:
 	if _crystal:
-		# The little stone on the altar glows brighter and dimmer, slow as breathing.
-		var breath := 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.0012)
-		(_crystal.get_child(1) as OmniLight3D).light_energy = lerpf(0.4, 1.0, breath)
+		# The little stone on the altar glows brighter and dimmer, slow as breathing,
+		# and brighter still when it has a memory to give back.
+		var waiting := _crystal.is_in_group("usables")
+		var breath := 0.5 + 0.5 * sin(Time.get_ticks_msec() * (0.0024 if waiting else 0.0012))
+		(_crystal.get_child(1) as OmniLight3D).light_energy = lerpf(0.4, 1.0, breath) * (1.8 if waiting else 1.0)
+		_update_heartstone()
 	_update_underwater_view(delta)
 	_update_story(delta)
 	_update_explored(delta)
@@ -1028,7 +1101,8 @@ func _build_sanctum() -> void:
 	_add_box(body, Vector3(2.1, 0.16, 1.3), Vector3(0, 1.72, 0), Vector3(0, 0.04, 0), _stone_mats[2])
 	MeshKit.part(body, MeshKit.box(Vector3(0.9, 0.04, 0.6)), moss, Vector3(-0.5, 1.81, 0.25), Vector3(0, 0.3, 0))
 
-	_crystal = Node3D.new()
+	_crystal = Heartstone.new()
+	_crystal.touched.connect(_on_heartstone_touched)
 	_crystal.position = Vector3(0, 1.96, -0.38)
 	add_child(_crystal)
 	MeshKit.part(_crystal, MeshKit.sphere(0.2, 0.3, 7, 4), MeshKit.glow(Color(0.75, 0.95, 0.9), 1.6))
@@ -1638,6 +1712,32 @@ func _deepest_point() -> Vector3:
 
 func _take_screenshot() -> void:
 	await get_tree().create_timer(Game.screenshot_delay).timeout
+	if Game.shot_echo:
+		# Walk up to the altar with a tool in hand, touch the heartstone, and
+		# watch the echo play and hand back.
+		var pl := Game.player
+		Game.start_quest("family", "Finding Home", ["Touch the heartstone (E at the altar)", "Find out what happened to your family"])
+		pl.global_position = Vector3(0, Game.ground_at(0, 2.4) + 0.2, 2.4)
+		pl._yaw = 0.0
+		pl._pitch = -0.35
+		await get_tree().create_timer(1.0).timeout
+		print("weapon %s, ready %s, usable %s, focused %s, prompt %s" % [pl.weapon != null, _heartstone_ready(),
+			_crystal.is_in_group("usables"), pl.focused == _crystal, _crystal.use_prompt()])
+		var base := Game.screenshot_path.get_basename()
+		get_viewport().get_texture().get_image().save_png(base + "_altar.png")
+		_crystal.use(pl)
+		var t := 0.0
+		for at in [1.2, 4.6, 6.4, 7.5, 12.6, 17.0]:
+			await get_tree().create_timer(at - t).timeout
+			t = at
+			get_viewport().get_texture().get_image().save_png("%s_echo_%.1f.png" % [base, at])
+			print("t %.1f frozen %s dim %.2f" % [at, pl.frozen, Audio.dim])
+		await get_tree().create_timer(6.0).timeout
+		get_viewport().get_texture().get_image().save_png(base + "_after.png")
+		print("after: frozen %s, echoes %s, aim %s (lv %d), steady %.2f, quest %s, usable %s, dim %.2f" % [pl.frozen, _echoes,
+			Game.skills.has("Aim"), Game.skill_level("Aim"), pl.aim_steadiness(), Game.quest("family").steps, _crystal.is_in_group("usables"), Audio.dim])
+		get_tree().quit()
+		return
 	if Game.shot_tools:
 		# The five dream tools in a row, and the hero holding the wand.
 		var pl := Game.player

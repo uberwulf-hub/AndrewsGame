@@ -66,6 +66,8 @@ var _pending_time := 0.0
 var _combat := 0.0
 var _bird_timer := 4.0
 var _master_fade := 0.0
+## Turned down to 0 while a Memory Echo plays its own music over the world.
+var dim := 1.0
 var _underwater := 0.0
 var _muffle_filters: Array[AudioEffectLowPassFilter] = []
 
@@ -284,7 +286,7 @@ func _process(delta: float) -> void:
 			target = _combat * COMBAT_GAIN
 		elif theme == active_theme:
 			target = 1.0 - _combat * 0.35
-		target *= duck * _master_fade
+		target *= duck * _master_fade * dim
 		var p: AudioStreamPlayer = _music[theme]
 		var gain := lerpf(db_to_linear(p.volume_db), target, 1.0 - exp(-delta / 1.6))
 		p.volume_db = linear_to_db(maxf(gain, 0.0001))
@@ -298,7 +300,7 @@ func _process(delta: float) -> void:
 	var amb_targets: Dictionary = BIOME_AMBIENCE.get(_biome, {})
 	for amb in _ambience:
 		var p: AudioStreamPlayer = _ambience[amb]
-		var target: float = amb_targets.get(amb, 0.0) * _master_fade
+		var target: float = amb_targets.get(amb, 0.0) * _master_fade * dim
 		if amb == "loop_underwater":
 			target = _underwater * 0.9
 		else:
