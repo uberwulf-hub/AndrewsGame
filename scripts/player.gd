@@ -632,6 +632,8 @@ func _fire_ray(muzzle: Vector3) -> void:
 		var collider = hit["collider"]
 		if collider is Enemy:
 			_hit_enemy(collider, end)
+		elif collider.has_method("on_shot"):
+			collider.on_shot()
 		else:
 			FX.burst(end, Color(1.0, 0.85, 0.6), 5, 3.0, 0.05)
 	FX.tracer(muzzle, end, WeaponData.ELEMENT_COLORS[weapon.element])

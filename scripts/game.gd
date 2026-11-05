@@ -288,6 +288,7 @@ var shot_ring := false
 var shot_map := false
 var shot_tools := false
 var shot_echo := false
+var shot_wisps := false
 var shot_save_loaded := false
 var shot_help := false
 
@@ -457,6 +458,8 @@ func _parse_args() -> void:
 			"--shot-birds":
 				shot_birds = true
 				story_start = true
+			"--shot-wisps":
+				shot_wisps = true
 			"--shot-echo":
 				shot_echo = true
 			"--shot-tools":

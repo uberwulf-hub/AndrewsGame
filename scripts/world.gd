@@ -210,6 +210,7 @@ func save_game() -> bool:
 		"night_passed": _night_passed,
 		"sanctum_found": _sanctum_found,
 		"echoes": Array(_echoes),
+		"woken": range(_buds.size()).filter(func(i): return _buds[i].awake),
 		"food_at_start": _food_at_start,
 		"cooking_hinted": _cooking_hinted,
 		"fox": [_fox._tips_given, _fox._feelings],
@@ -244,6 +245,11 @@ func _resume(player: Player, hud: Hud, data: Dictionary) -> void:
 	_night_passed = s.night_passed
 	_sanctum_found = s.sanctum_found
 	_echoes.assign(s.get("echoes", []))
+	for i in s.get("woken", []):
+		if i < _buds.size():
+			_buds[i].wake(false)
+	if _echoes.has("aim"):
+		get_tree().create_timer(20.0).timeout.connect(_start_wake_quest)
 	_food_at_start = s.food_at_start
 	_cooking_hinted = s.cooking_hinted
 	var right := Basis(Vector3.UP, player._yaw) * Vector3.RIGHT
@@ -611,6 +617,51 @@ func _after_echo(_skipped: bool, which: String) -> void:
 					_otter.say(["You went all quiet and glowy for a second.", "Are you okay? You were smiling."]))
 				get_tree().create_timer(10.0).timeout.connect(func():
 					_fox.say(["\"Steady hands. Breathe out. Let go.\"", "...Huh. Why do I know that one?"]))
+				get_tree().create_timer(22.0).timeout.connect(func():
+					_fox.say(["See those sleepy little lights on top of the stones?", "Bet you can't wake all eight with that thing. Go on. Prove me wrong."])
+					_start_wake_quest())
+	get_tree().create_timer(12.0).timeout.connect(_autosave)
+
+
+# --- Waking the stones ---------------------------------------------------------
+# Each standing stone has a sleepy light on top. Once Aim is remembered, a
+# dream tool's shot wakes one into a warm glow, and the Sanctum lights up one
+# stone at a time. Before then they just stir.
+
+var _buds: Array[WispBud] = []
+
+
+func _woken() -> int:
+	return _buds.filter(func(b): return b.awake).size()
+
+
+func _wake_step() -> String:
+	return "Wake the sleepy lights on the stones (shoot them)  %d/%d" % [_woken(), _buds.size()]
+
+
+func _start_wake_quest() -> void:
+	if _woken() < _buds.size():
+		Game.start_quest("wake", "Wake the Stones", [_wake_step()], false, "Fox")
+
+
+func _on_bud_shot(bud: WispBud) -> void:
+	if bud.awake:
+		return
+	if not _echoes.has("aim"):
+		bud.stir()
+		return
+	bud.wake(true, 0.8 + 0.07 * _woken())
+	Game.practice("Aim", 1.0)
+	Game.set_step("wake", 0, _wake_step(), false)
+	if _woken() < _buds.size():
+		return
+	Game.complete_quest("wake")
+	Game.practice("Aim", 4.0)
+	if _otter and _fox:
+		get_tree().create_timer(2.0).timeout.connect(func():
+			_otter.say(["Look! The stones are all lit up!", "It feels kind of... cozy here now. Like it could be home."]))
+		get_tree().create_timer(9.0).timeout.connect(func():
+			_fox.say(["Not bad. You only missed, what, forty times?", "Kidding. ...Mostly."]))
 	get_tree().create_timer(12.0).timeout.connect(_autosave)
 
 
@@ -1086,6 +1137,12 @@ func _build_sanctum() -> void:
 		stone.scale = flat
 		var cap := MeshKit.part(body, MeshKit.sphere(0.33, 0.22, 7, 3), moss, base + Vector3(0, size.y - 0.12, 0), lean)
 		cap.scale = flat
+		# A sleepy light curled up on top, waiting to be woken.
+		var bud := WispBud.new()
+		bud.position = base + Vector3(0, size.y + 0.1, 0)
+		bud.shot.connect(_on_bud_shot)
+		add_child(bud)
+		_buds.append(bud)
 		# Moss climbing up from the ground.
 		var foot := MeshKit.part(body, MeshKit.cyl(0.43, 0.47, size.y * 0.22, 6), deep_moss, base + Vector3(0, size.y * 0.11 - 0.1, 0), lean)
 		foot.scale = flat
@@ -1712,6 +1769,45 @@ func _deepest_point() -> Vector3:
 
 func _take_screenshot() -> void:
 	await get_tree().create_timer(Game.screenshot_delay).timeout
+	if Game.shot_wisps:
+		# Stand by the altar and shoot each stone's sleepy light: before the
+		# echo they only stir, after it they wake one by one.
+		var pl := Game.player
+		pl.global_position = Vector3(0, Game.ground_at(0, 3.0) + 0.2, 3.0)
+		await get_tree().create_timer(0.5).timeout
+		var shoot_at := func(bud: WispBud) -> void:
+			for k in 6:
+				var f := -pl.camera.global_basis.z
+				var d := (bud.global_position - pl.camera.global_position).normalized()
+				pl._yaw += angle_difference(atan2(-f.x, -f.z), atan2(-d.x, -d.z))
+				pl._pitch += asin(d.y) - asin(f.y)
+				await get_tree().process_frame
+				await get_tree().process_frame
+			pl._fire_timer = 0.0
+			pl.ammo = maxi(pl.ammo, 1)
+			pl._try_fire()
+			await get_tree().create_timer(0.4).timeout
+		await shoot_at.call(_buds[0])
+		print("before echo: woken %d" % _woken())
+		_echoes.append("aim")
+		Game.skills["Aim"] = 0.0
+		_start_wake_quest()
+		var base := Game.screenshot_path.get_basename()
+		for i in _buds.size():
+			await shoot_at.call(_buds[i])
+			print("bud %d awake %s, step: %s" % [i, _buds[i].awake, Game.quest("wake").get("steps", [{}])[0].get("text", "(quest done)")])
+			if i == 3:
+				get_viewport().get_texture().get_image().save_png(base + "_half.png")
+		print("woken %d/%d, wake quest left %s, aim xp %.1f" % [_woken(), _buds.size(), not Game.quest("wake").is_empty(), Game.skills.get("Aim", 0.0)])
+		# The lit circle at night, from a little way out.
+		_make_night(_env, _sky_material, _sun)
+		pl.global_position = Vector3(0, Game.ground_at(0, 17.0) + 0.2, 17.0)
+		pl._yaw = 0.0
+		pl._pitch = -0.2
+		await get_tree().create_timer(2.5).timeout
+		get_viewport().get_texture().get_image().save_png(base + "_lit.png")
+		get_tree().quit()
+		return
 	if Game.shot_echo:
 		# Walk up to the altar with a tool in hand, touch the heartstone, and
 		# watch the echo play and hand back.
