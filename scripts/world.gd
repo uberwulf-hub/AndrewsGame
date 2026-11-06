@@ -43,6 +43,7 @@ func _ready() -> void:
 	if Game.ENEMIES_ENABLED:
 		_create_camps()
 	_place_starter_loot()
+	_build_lake_ruin()
 
 	var player := Player.new()
 	player.name = "Player"
@@ -212,6 +213,7 @@ func save_game() -> bool:
 		"echoes": Array(_echoes),
 		"woken": range(_buds.size()).filter(func(i): return _buds[i].awake),
 		"home_step": _home_step,
+		"lake_stage": _lake_stage,
 		"food_at_start": _food_at_start,
 		"cooking_hinted": _cooking_hinted,
 		"fox": [_fox._tips_given, _fox._feelings],
@@ -254,6 +256,14 @@ func _resume(player: Player, hud: Hud, data: Dictionary) -> void:
 		get_tree().create_timer(25.0).timeout.connect(_start_home)
 	if _echoes.has("aim"):
 		get_tree().create_timer(20.0).timeout.connect(_start_wake_quest)
+	_lake_stage = s.get("lake_stage", -1)
+	if _lake:
+		if _lake_stage == 2:
+			_lake.treasure.light_up()
+		elif _lake_stage >= 3:
+			_lake.treasure.queue_free()
+	if _home_step >= HOME_STEPS.size() and _lake_stage < 0:
+		get_tree().create_timer(25.0).timeout.connect(_start_lake)
 	_food_at_start = s.food_at_start
 	_cooking_hinted = s.cooking_hinted
 	var right := Basis(Vector3.UP, player._yaw) * Vector3.RIGHT
@@ -536,7 +546,8 @@ func _update_story(delta: float) -> void:
 	_update_settle()
 	_update_cooking_hint()
 	_update_map_goal()
-	var dist := Vector2(p.global_position.x, p.global_position.z).length()
+	_update_lake(delta)
+	var dist :=Vector2(p.global_position.x, p.global_position.z).length()
 	if not _sanctum_found:
 		if dist < 22.0 and not Game.quest("hum").is_empty():
 			_sanctum_found = true
@@ -574,13 +585,28 @@ func _heartstone_ready() -> bool:
 		and not Game.quest("family").is_empty()
 
 
+## The lake's heartstone, once you've followed the hum there.
+func _lake_stone_ready() -> bool:
+	return not _echo_playing and _lake_stage == 1 and not _echoes.has("dive")
+
+
 func _update_heartstone() -> void:
-	var ready := _heartstone_ready()
-	if ready != _crystal.is_in_group("usables"):
+	_set_usable(_crystal, _heartstone_ready())
+	if _lake:
+		_set_usable(_lake.heartstone, _lake_stone_ready())
+
+
+func _set_usable(node: Node, ready: bool) -> void:
+	if ready != node.is_in_group("usables"):
 		if ready:
-			_crystal.add_to_group("usables")
+			node.add_to_group("usables")
 		else:
-			_crystal.remove_from_group("usables")
+			node.remove_from_group("usables")
+
+
+func _on_lake_stone_touched() -> void:
+	if _lake_stone_ready():
+		play_echo("dive")
 
 
 func _on_heartstone_touched() -> void:
@@ -594,9 +620,10 @@ func play_echo(which: String) -> void:
 	var p := Game.player
 	p.frozen = true
 	Audio.play("level_up", null, -10.0, 0.7)
+	var stone: Node3D = _lake.heartstone if which == "dive" else _crystal
 	var flare := create_tween()
-	flare.tween_property(_crystal.get_child(1), "omni_range", 16.0, 1.4)
-	flare.tween_property(_crystal.get_child(1), "omni_range", 7.0, 2.0).set_delay(16.0)
+	flare.tween_property(stone.get_child(1), "omni_range", 16.0, 1.4)
+	flare.tween_property(stone.get_child(1), "omni_range", 7.0, 2.0).set_delay(16.0)
 	create_tween().tween_property(Audio, "dim", 0.0, 1.5)
 	MemoryEcho.play(self, which).finished.connect(_after_echo.bind(which))
 
@@ -624,7 +651,129 @@ func _after_echo(_skipped: bool, which: String) -> void:
 				get_tree().create_timer(22.0).timeout.connect(func():
 					_fox.say(["See those sleepy little lights on top of the stones?", "Bet you can't wake all eight with that thing. Go on. Prove me wrong."])
 					_start_wake_quest())
+		"dive":
+			Game.skills["Diving"] = Game.skills.get("Diving", 0.0)
+			Game.notify("A memory comes back to you: Diving", Color(1.0, 0.9, 0.6))
+			get_tree().create_timer(2.5).timeout.connect(func():
+				Game.notify("You can hold your breath much longer now, and dive faster (C).", Color(0.85, 0.85, 0.75)))
+			_finish_family_step("Touch the heartstone by the lake", "Touch the heartstone by the lake")
+			if _otter and _fox:
+				get_tree().create_timer(3.5).timeout.connect(func():
+					_otter.say(["You did the glowy thing again!", "You were laughing this time. That was a good one, huh?"]))
+				get_tree().create_timer(10.0).timeout.connect(func():
+					_fox.say(["\"Big breath... hold it...\"", "\"...and come back up smiling.\" Okay. I DEFINITELY know that one."]))
+				get_tree().create_timer(20.0).timeout.connect(_lake_dare)
 	get_tree().create_timer(12.0).timeout.connect(_autosave)
+
+
+# --- The lake ------------------------------------------------------------------
+# Once the Sanctum is home, the marble hums again, toward the water. Old stones
+# at the lake's edge hold a second heartstone (the rainy-day echo: Diving),
+# and then the Otter dares you to bring back what's glowing on the bottom.
+
+var _lake: LakeRuin
+## -1 not yet, 0 following the hum, 1 at the lake, 2 the dare, 3 found it.
+var _lake_stage := -1
+var _lake_hum := 2.0
+
+
+func _build_lake_ruin() -> void:
+	var spot := LakeRuin.find_spot(Game.wake_point if Game.story_start else Vector3(INF, 0, INF))
+	if spot.is_empty():
+		push_warning("No shore found for the lake ruin")
+		return
+	_lake = LakeRuin.build(self, spot, _stone_mats)
+	_lake.heartstone.touched.connect(_on_lake_stone_touched)
+	_lake.treasure_taken.connect(_on_lake_treasure)
+
+
+func _start_lake() -> void:
+	if _lake_stage >= 0 or _otter == null or _lake == null:
+		return
+	_lake_stage = 0
+	Audio.play("ui_notify", null, -6.0, 1.9)
+	_otter.say(["Hey! Your marble's humming again!", "It sounds kind of... splashy? I think it wants us to go to the water!"])
+	get_tree().create_timer(7.0).timeout.connect(func():
+		_fox.say(["Translation: he wants to go swimming.", "He ALWAYS wants to go swimming."]))
+	_add_family_step("Follow the marble's hum to the water (it chimes when you face the right way)")
+
+
+## A new step on the main quest, just before the last open one ("find out
+## what happened to your family" stays at the bottom).
+func _add_family_step(text: String) -> void:
+	var q := Game.quest("family")
+	if q.is_empty():
+		Game.start_quest("family", "Finding Home", [text, "Find out what happened to your family"])
+		return
+	var at: int = q.steps.size()
+	if at > 0 and (q.steps[-1].text as String).begins_with("Find out what happened"):
+		at -= 1
+	q.steps.insert(at, {"text": text, "done": false})
+	Game.quests_changed.emit()
+
+
+func _finish_family_step(starts: String, text: String) -> void:
+	var q := Game.quest("family")
+	for i in q.get("steps", []).size():
+		if (q.steps[i].text as String).begins_with(starts):
+			Game.set_step("family", i, text, true)
+
+
+func _update_lake(delta: float) -> void:
+	if _lake == null or _lake_stage != 0:
+		return
+	var p := Game.player
+	var to := _lake.heartstone.global_position - p.global_position
+	to.y = 0.0
+	if to.length() < 12.0:
+		_lake_stage = 1
+		Game.notify("Old stones at the water's edge... and another heartstone.", Color(0.6, 0.85, 1.0))
+		_finish_family_step("Follow the marble's hum", "Follow the hum to the lake")
+		_add_family_step("Touch the heartstone by the lake (E)")
+		if _otter:
+			_otter.say(["ANOTHER glowy stone! And it's right next to WATER!", "Best. Day. Ever."])
+		return
+	_lake_hum -= delta
+	if _lake_hum <= 0.0:
+		_lake_hum = 2.4
+		var look := -p.camera.global_transform.basis.z
+		look.y = 0.0
+		if look.normalized().dot(to.normalized()) > 0.9:
+			Audio.play("ui_notify", null, lerpf(-4.0, -14.0, clampf(to.length() / 120.0, 0.0, 1.0)), 1.9)
+
+
+## After the echo: the stone on the lake bed lights up, and the Otter dares you.
+func _lake_dare() -> void:
+	if _lake_stage >= 2 or _lake == null:
+		return
+	_lake_stage = 2
+	_lake.treasure.light_up()
+	if _otter and _fox:
+		_otter.say(["Look! Something's glowing at the bottom, out past the stones!", "I dare you to dive down and get it. Big breath!"])
+		get_tree().create_timer(7.0).timeout.connect(func():
+			_fox.say(["I'll wait up here. Staying dry.", "Like a genius."]))
+	Game.start_quest("lakebed", "The Bottom of the Lake", ["Dive for what's glowing (C to dive)"], false, "Otter")
+
+
+func _on_lake_treasure() -> void:
+	_lake_stage = 3
+	Game.complete_quest("lakebed")
+	Game.ideas.erase("The Bottom of the Lake")
+	Game.backpack.append("River stone (a little house scratched on it)")
+	Game.practice("Diving", 4.0)
+	_add_family_step("A clue: a river stone with a little house scratched on it")
+	_finish_family_step("A clue:", "A clue: a river stone with a little house scratched on it")
+	_hud.think([
+		"A river stone, worn smooth...",
+		"Someone scratched a little house into it. A door, and a round window.",
+		"...Like the house in my dream.",
+	], 3.6)
+	if _otter and _fox:
+		get_tree().create_timer(12.0).timeout.connect(func():
+			_fox.say(["Someone was here before us.", "Someone who missed home too."]))
+		get_tree().create_timer(19.0).timeout.connect(func():
+			_otter.say(["We're keeping it. It's going right on the hearth.", "...Can I hold it first?"]))
+	get_tree().create_timer(14.0).timeout.connect(_autosave)
 
 
 # --- Waking the stones ---------------------------------------------------------
@@ -734,6 +883,7 @@ func _on_built(id: String, at: Vector3) -> void:
 				_otter.say(["We did it! It's a real home now!", "Hearth, beds, a chest, a roof... we should get a welcome mat."]))
 			get_tree().create_timer(9.0).timeout.connect(func():
 				_fox.say(["Not bad. I give it four tails out of five.", "...Okay, five. Don't let it go to your head."]))
+		get_tree().create_timer(40.0).timeout.connect(_start_lake)
 	get_tree().create_timer(10.0).timeout.connect(_autosave)
 
 
@@ -741,9 +891,12 @@ func _process(delta: float) -> void:
 	if _crystal:
 		# The little stone on the altar glows brighter and dimmer, slow as breathing,
 		# and brighter still when it has a memory to give back.
-		var waiting := _crystal.is_in_group("usables")
-		var breath := 0.5 + 0.5 * sin(Time.get_ticks_msec() * (0.0024 if waiting else 0.0012))
-		(_crystal.get_child(1) as OmniLight3D).light_energy = lerpf(0.4, 1.0, breath) * (1.8 if waiting else 1.0)
+		for stone in [_crystal, _lake.heartstone if _lake else null]:
+			if stone == null:
+				continue
+			var waiting: bool = stone.is_in_group("usables")
+			var breath := 0.5 + 0.5 * sin(Time.get_ticks_msec() * (0.0024 if waiting else 0.0012))
+			(stone.get_child(1) as OmniLight3D).light_energy = lerpf(0.4, 1.0, breath) * (1.8 if waiting else 1.0)
 		_update_heartstone()
 	_update_underwater_view(delta)
 	_update_story(delta)
@@ -1890,6 +2043,9 @@ func _take_screenshot() -> void:
 			get_viewport().get_texture().get_image().save_png("%s_bloom_%.1f.png" % [Game.screenshot_path.get_basename(), at])
 		get_tree().quit()
 		return
+	if Game.shot_lake:
+		_test_lake()
+		return
 	if Game.shot_home:
 		# Make It Home, start to finish: each piece placed on the Sanctum floor
 		# the way the player would, a nap on the bedroll, the chest used.
@@ -2451,6 +2607,72 @@ func _test_sit() -> void:
 	await get_tree().create_timer(3.0).timeout
 	print("seated %s frozen %s fox state %d" % [pl.seated, pl.frozen, _fox.state])
 	shot.call("up")
+
+
+## Test hook (--shot-lake): the second echo, start to finish. The hum toward
+## the water, the ruin, the heartstone and the rainy-day echo, then the dare
+## and a dive to the glowing stone on the lake bed.
+func _test_lake() -> void:
+	var pl := Game.player
+	pl._end_wake()
+	var base := Game.screenshot_path.get_basename()
+	var shot := func(tag: String):
+		get_viewport().get_texture().get_image().save_png("%s_%s.png" % [base, tag])
+	await get_tree().create_timer(55.0).timeout  # through the opening lines and the fire quest
+	for c in [_fox, _otter]:
+		if c._zzz:
+			c._zzz.queue_free()
+		c.body.rotation.z = 0.0
+		c.follow()
+		c._forage_timer = 999.0
+	print("lake ruin at %s, out %s, treasure at %s (water depth %.2f)" % [_lake.global_position.snapped(Vector3.ONE * 0.1), _lake.out.snapped(Vector3.ONE * 0.01),
+		_lake.treasure.global_position.snapped(Vector3.ONE * 0.1), WATER_LEVEL - _lake.treasure.global_position.y])
+	Game.start_quest("family", "Finding Home", ["Touch the heartstone", "Find out what happened to your family"])
+	Game.set_step("family", 0, "Touch the heartstone", true)
+	_home_step = HOME_STEPS.size()
+	_start_lake()
+	await get_tree().create_timer(1.0).timeout
+	print("stage %d, steps %s" % [_lake_stage, Game.quest("family").steps])
+	var look_out := func(local: Vector3, pitch: float):
+		pl.global_position = _lake.to_global(local) + Vector3.UP * 2.0
+		pl.global_position.y = Game.ground_at(pl.global_position.x, pl.global_position.z) + 0.3
+		pl.velocity = Vector3.ZERO
+		pl._yaw = _lake.rotation.y
+		pl._pitch = pitch
+	look_out.call(Vector3(2.5, 0, 9.0), -0.2)
+	await get_tree().create_timer(2.5).timeout
+	shot.call("ruin")
+	look_out.call(Vector3(0.3, 0, 3.4), -0.3)
+	await get_tree().create_timer(1.5).timeout
+	print("arrived: stage %d, usable %s, focused %s, steps %s" % [_lake_stage, _lake.heartstone.is_in_group("usables"),
+		pl.focused == _lake.heartstone, Game.quest("family").steps])
+	shot.call("stone")
+	_lake.heartstone.use(pl)
+	var t := 0.0
+	for at in [2.0, 3.6, 5.5, 7.5, 9.5, 11.2, 12.6]:
+		await get_tree().create_timer(at - t).timeout
+		t = at
+		shot.call("echo_%.1f" % at)
+	await get_tree().create_timer(34.0).timeout
+	print("after echo: echoes %s, diving %s, air time %.0f, stage %d, side %s" % [_echoes, Game.skills.has("Diving"), pl.air_time(), _lake_stage, Game.quest("lakebed")])
+	look_out.call(Vector3(0.5, 0, 0.5), -0.35)
+	await get_tree().create_timer(1.5).timeout
+	shot.call("dare")
+	# Down to the bottom.
+	var tr := _lake.treasure.global_position
+	pl.global_position = tr + _lake.out * -0.7 + Vector3.UP * 0.5
+	Input.action_press("swim_down")
+	pl.velocity = Vector3.ZERO
+	pl._yaw = _lake.rotation.y
+	pl._pitch = -0.4
+	await get_tree().create_timer(1.5).timeout
+	print("on the bed: swimming %s, under %s, usable %s, focused %s, air %.2f" % [pl.swimming, pl.head_under(), _lake.treasure.is_in_group("usables"), pl.focused == _lake.treasure, pl.air])
+	shot.call("lakebed")
+	Input.action_release("swim_down")
+	pl._interact()
+	await get_tree().create_timer(3.0).timeout
+	print("found: stage %d, backpack %s, side %s, steps %s, diving %.1f" % [_lake_stage, Game.backpack, Game.quest("lakebed"), Game.quest("family").steps, Game.skills.get("Diving", 0.0)])
+	get_tree().quit()
 
 
 ## Test hook (--shot-drown): a swim with the pets, then a dive held too long:

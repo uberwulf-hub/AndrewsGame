@@ -28,6 +28,7 @@ const MOODS := {
 	"gloom": [Color(0.28, 0.32, 0.42), Color(0.5, 0.53, 0.6), Color(0.65, 0.7, 0.85), 0.45, Color(0.48, 0.52, 0.6), 0.02, Color(0.82, 0.9, 1.0), 0.55, 0.15],
 	"dusk": [Color(0.3, 0.32, 0.55), Color(0.86, 0.64, 0.62), Color(0.88, 0.76, 0.9), 0.65, Color(0.62, 0.56, 0.72), 0.012, Color(0.97, 0.94, 1.03), 0.8, 0.32],
 	"moon": [Color(0.03, 0.05, 0.13), Color(0.12, 0.17, 0.3), Color(0.72, 0.8, 1.0), 0.75, Color(0.1, 0.14, 0.24), 0.006, Color(0.9, 0.95, 1.08), 0.95, 0.22],
+	"rain": [Color(0.4, 0.46, 0.56), Color(0.66, 0.7, 0.76), Color(0.85, 0.88, 0.95), 0.75, Color(0.62, 0.66, 0.72), 0.007, Color(0.95, 0.98, 1.04), 0.88, 0.12],
 	"white": [Color(1, 1, 1), Color(1.0, 0.97, 0.92), Color(1.0, 0.98, 0.94), 2.2, Color(1.0, 0.97, 0.92), 0.018, Color(1.1, 1.08, 1.02), 0.6, 0.5],
 }
 
@@ -341,6 +342,8 @@ func _play_echo() -> void:
 	match _echo:
 		"aim":
 			await _echo_aim()
+		"dive":
+			await _echo_dive()
 	echo_done.emit()
 
 
@@ -403,6 +406,165 @@ func _echo_aim() -> void:
 		_fade_to(1.0, 2.6)
 		create_tween().tween_property(_music, "volume_db", -40.0, 2.8))
 	await _wait(15.6)
+
+
+## A rainy afternoon at the second home. A big puddle in the yard, the Fox and
+## the Otter splashing round it, and the Otter dives in like it's the ocean
+## and comes up with a shiny pebble. She laughs from the porch; he comes out
+## into the rain and jumps in with them. The line he always said at the pool.
+func _echo_dive() -> void:
+	var h := HOME2
+	var pool := h + Vector3(-3.2, 0, 8.2)
+	var porch := h + Vector3(-1.4, 0.2, 3.9)
+	var edge := h + Vector3(-2.2, 0, 7.2)
+	var water := MeshKit.mat(Color(0.3, 0.36, 0.44), 0.04, 0.5)
+	var puddle := MeshKit.part(self, MeshKit.cyl(1.7, 1.7, 0.02, 24), water, pool + Vector3(0, 0.012, 0))
+	puddle.scale = Vector3(1.0, 1.0, 0.72)
+	var small := MeshKit.part(self, MeshKit.cyl(0.7, 0.7, 0.02, 16), water, h + Vector3(0.4, 0.01, 6.4))
+	small.scale = Vector3(1.0, 1.0, 0.6)
+	var pebble := MeshKit.part(self, MeshKit.sphere(0.06, 0.05, 8, 4), MeshKit.glow(Color(0.65, 0.9, 1.0), 3.0), pool)
+	pebble.visible = false
+	# Rain dimpling the puddles the whole time.
+	var drizzle := Timer.new()
+	drizzle.wait_time = 0.09
+	add_child(drizzle)
+	drizzle.timeout.connect(func():
+		var a := randf() * TAU
+		var r := sqrt(randf())
+		var at := pool + Vector3(cos(a) * r * 1.5, 0.03, sin(a) * r * 1.1)
+		if randf() < 0.25:
+			at = h + Vector3(0.4 + cos(a) * r * 0.6, 0.03, 6.4 + sin(a) * r * 0.4)
+		_ripple(at, randf_range(0.12, 0.22), 0.6))
+	await _cut(func():
+		_set_sun(Vector3(-40, -50, 0))
+		_mood("rain", 0.0)
+		_set_rain(true)
+		_motes.emitting = false
+		_set_windows(Color(1.0, 0.78, 0.45), 0.8, 0.01)
+		_place(_hero, porch, PI)
+		_place(_mate, porch + Vector3(0.8, 0, -0.1), PI)
+		_place(_fox, pool + Vector3(1.9, 0, 0), 0.0)
+		_place(_otter, pool + Vector3(-1.6, 0, 0.4), PI)
+		_hero.raise_arms(0, 0, 0.01)
+		_mate.raise_arms(0, 0, 0.01)
+		_circle(_fox, pool, 2.0, 1.7, 0.0)
+		_circle(_otter, pool, 1.8, 1.9, PI)
+		_shot(h + Vector3(-0.6, 1.5, 14.2), h + Vector3(-1.6, 1.3, 12.6), h + Vector3(-3.0, 0.7, 7.6), h + Vector3(-2.7, 0.7, 7.4), 15.5)
+		_music.play(31.0)
+		drizzle.start()
+	)
+	# The Otter can't resist: in he goes, and under.
+	_at(0.9, func():
+		_stop_circling()
+		_otter.move_to(pool, 0.45)
+		_fox.move_to(pool + Vector3(1.5, 0, 0.5), 0.8))
+	_at(1.4, func():
+		_otter.set_wet(1.0)
+		_splash(pool, 26, 2.6)
+		_fox.face(pool))
+	_at(2.2, func():
+		_splash(pool, 14, 1.8)
+		create_tween().tween_property(_otter, "position:y", -0.8, 0.5).set_ease(Tween.EASE_IN))
+	_at(2.4, func(): _say("Big breath... hold it...", 2.6))
+	for t in [2.9, 3.5, 4.1, 4.6]:
+		_at(t, func(): _splash(pool + Vector3(randf_range(-0.2, 0.2), 0, randf_range(-0.2, 0.2)), 3, 0.6))
+	# Up he comes, with treasure. The Fox jumps a mile.
+	_at(5.0, func():
+		pebble.reparent(_otter, false)
+		pebble.position = Vector3(0, 0.32, -0.42)
+		pebble.visible = true
+		create_tween().tween_property(_otter, "position:y", 0.0, 0.25).set_ease(Tween.EASE_OUT)
+		_splash(pool, 34, 3.2)
+		_fox.move_to(pool + Vector3(2.6, 0, 0.9), 0.3))
+	_at(5.6, func(): _say("...and come back up smiling.", 3.2))
+	_at(6.0, func():
+		_hero.walk_to(h + Vector3(-1.9, 0, 6.0), 1.3))
+	_at(7.3, func():
+		_hero.walk_to(edge, 0.8))
+	_at(7.0, func(): _otter.move_to(pool + Vector3(0.9, 0, -0.7), 0.9))
+	_at(8.2, func():
+		_otter.face(edge)
+		_hero.face(_otter.position))
+	_at(8.8, func():
+		# Into his hand.
+		var hand := _hero.position + Basis(Vector3.UP, _hero.rotation.y) * Vector3(0.15, 1.1, -0.35)
+		pebble.reparent(self)
+		create_tween().tween_property(pebble, "global_position", hand, 0.4).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT))
+	_at(10.0, func():
+		# And in he jumps.
+		pebble.visible = false
+		var land := pool + Vector3(0.5, 0, -0.2)
+		_hero.face(land)
+		var tw := create_tween()
+		tw.tween_property(_hero, "position", (_hero.position + land) * 0.5 + Vector3(0, 0.5, 0), 0.25).set_ease(Tween.EASE_OUT)
+		tw.tween_property(_hero, "position", land, 0.25).set_ease(Tween.EASE_IN)
+		tw.tween_callback(func():
+			_splash(land, 60, 4.0)
+			_fox.set_wet(1.0)
+			_otter.move_to(pool + Vector3(-1.0, 0, 0.3), 0.5)))
+	_at(10.9, func(): _fox.shake_off())
+	_at(11.4, func():
+		_circle(_otter, pool, 1.3, 2.2, PI * 0.8)
+		_fox.move_to(pool + Vector3(1.4, 0, -0.6), 0.6))
+	_at(12.8, func():
+		_fade_to(1.0, 2.6)
+		create_tween().tween_property(_music, "volume_db", -40.0, 2.8))
+	await _wait(15.6)
+
+
+## Water flung up in a crown of drops, with rings spreading out.
+func _splash(at: Vector3, amount: int, speed: float) -> void:
+	var p := CPUParticles3D.new()
+	var drop := MeshKit.sphere(0.035, 0.07, 5, 3)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.85, 0.92, 1.0, 0.75)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.roughness = 0.1
+	drop.material = mat
+	p.mesh = drop
+	p.one_shot = true
+	p.amount = amount
+	p.lifetime = 0.8
+	p.explosiveness = 0.95
+	p.direction = Vector3.UP
+	p.spread = 35.0
+	p.initial_velocity_min = speed * 0.5
+	p.initial_velocity_max = speed
+	p.gravity = Vector3(0, -9.8, 0)
+	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	p.emission_sphere_radius = 0.25
+	add_child(p)
+	p.position = at + Vector3(0, 0.05, 0)
+	p.emitting = true
+	_timer(1.4).timeout.connect(p.queue_free)
+	if amount >= 10:
+		Audio.play("swim_stroke", null, -2.0 if amount > 30 else -6.0, 1.1)
+		for k in 2:
+			_at(k * 0.18, func(): _ripple(at + Vector3(0, 0.03, 0), 0.5 + speed * 0.25, 1.0))
+
+
+## A ring spreading across the water and fading.
+func _ripple(at: Vector3, radius: float, duration: float) -> void:
+	var ring := MeshInstance3D.new()
+	var torus := TorusMesh.new()
+	torus.inner_radius = 0.9
+	torus.outer_radius = 1.0
+	torus.rings = 24
+	torus.ring_segments = 3
+	ring.mesh = torus
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.85, 0.92, 1.0, 0.5)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	ring.material_override = mat
+	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(ring)
+	ring.position = at
+	ring.scale = Vector3(0.1, 0.02, 0.1) * radius
+	var tw := ring.create_tween().set_parallel()
+	tw.tween_property(ring, "scale", Vector3(radius, 0.02 * radius, radius), duration).set_ease(Tween.EASE_OUT)
+	tw.tween_property(mat, "albedo_color:a", 0.0, duration)
+	tw.chain().tween_callback(ring.queue_free)
 
 
 # --- Direction helpers -------------------------------------------------------

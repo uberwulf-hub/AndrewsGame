@@ -276,6 +276,8 @@ func _swim(delta: float, input: Vector2) -> Vector3:
 	wish.y += rise
 	wish = wish.limit_length(1.0)
 	var speed := SWIM_SPRINT_SPEED if Input.is_action_pressed("sprint") else SWIM_SPEED
+	if rise < 0.0 and Game.skills.has("Diving"):
+		speed *= 1.3  # remembered how to dive: down quick and smooth
 	var target := wish * speed
 	var float_y := Game.WATER_LEVEL - FLOAT_DEPTH
 	var below := float_y - global_position.y
@@ -312,6 +314,14 @@ func head_under() -> bool:
 	return swimming and global_position.y < Game.WATER_LEVEL - FLOAT_DEPTH - 0.3
 
 
+## How long a breath lasts: 30 s, or with Diving remembered at the lake, 45 s
+## at first and up to 75 s at the cap.
+func air_time() -> float:
+	if not Game.skills.has("Diving"):
+		return AIR_TIME
+	return AIR_TIME * (1.5 + float(Game.skill_level("Diving") - 1) / float(Game.SKILL_MAX - 1))
+
+
 ## How close he is to running out of air: 0 while there's plenty, rising to 1
 ## as the last of it goes.
 func low_air() -> float:
@@ -321,7 +331,7 @@ func low_air() -> float:
 func _update_air(delta: float) -> void:
 	var under := head_under()
 	if under:
-		air = maxf(0.0, air - delta / AIR_TIME)
+		air = maxf(0.0, air - delta / air_time())
 		if air < 0.35 and not _air_warned:
 			_air_warned = true
 			Game.notify("Running out of air! Swim up (Space)!", Color(0.6, 0.85, 1.0))
@@ -884,6 +894,7 @@ var focused_usable: Node3D
 signal fire_requested(fire: Campfire)
 var _warned := {}
 var _swim_practice := 0.0
+var _dive_practice := 0.0
 
 
 func _update_needs(delta: float) -> void:
@@ -911,6 +922,11 @@ func _update_needs(delta: float) -> void:
 		if _swim_practice > 10.0:
 			_swim_practice = 0.0
 			Game.practice("Swimming", 1.0)
+		if head_under() and Game.skills.has("Diving"):
+			_dive_practice += delta
+			if _dive_practice > 6.0:
+				_dive_practice = 0.0
+				Game.practice("Diving", 1.0)
 	_update_gather_focus()
 
 
