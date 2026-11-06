@@ -1874,6 +1874,22 @@ func _deepest_point() -> Vector3:
 
 func _take_screenshot() -> void:
 	await get_tree().create_timer(Game.screenshot_delay).timeout
+	if Game.shot_bloom:
+		# Bloom (Q) as it opens, spreads and settles, in daylight on the grass.
+		var pl := Game.player
+		pl.global_position = Vector3(30.0, Game.ground_at(30.0, 30.0) + 0.3, 30.0)
+		pl._yaw = 0.6
+		pl._pitch = -0.5
+		pl.zoom = 5.0
+		await get_tree().create_timer(1.5).timeout
+		pl._nova()
+		var t := 0.0
+		for at in [0.2, 0.5, 1.0]:
+			await get_tree().create_timer(at - t).timeout
+			t = at
+			get_viewport().get_texture().get_image().save_png("%s_bloom_%.1f.png" % [Game.screenshot_path.get_basename(), at])
+		get_tree().quit()
+		return
 	if Game.shot_home:
 		# Make It Home, start to finish: each piece placed on the Sanctum floor
 		# the way the player would, a nap on the bedroll, the chest used.

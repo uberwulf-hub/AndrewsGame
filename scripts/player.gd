@@ -29,7 +29,7 @@ const DASH_COOLDOWN := 2.2
 const DASH_SPEED := 26.0
 const DASH_TIME := 0.18
 const SPAWN_POINT := Vector3(0, 2, 6)
-const NOVA_COLOR := Color(0.4, 0.9, 1.0)
+const NOVA_COLOR := Color(1.0, 0.78, 0.72)  # blossom pink-cream (Bloom, dash, the puff when knocked out)
 const SWIM_DEPTH := 1.3  # water at chest height
 const FLOAT_DEPTH := 1.45  # how deep the feet hang while treading water
 const SWIM_SPEED := 4.0
@@ -702,9 +702,8 @@ func _nova() -> void:
 	nova_cooldown = NOVA_COOLDOWN
 	var color: Color = NOVA_COLOR if weapon.element == WeaponData.Element.KINETIC else WeaponData.ELEMENT_COLORS[weapon.element]
 	var center := global_position + Vector3.UP * 0.6
-	FX.ring(center, NOVA_RADIUS, color, 0.4)
-	FX.flash(center, color, 8.0, 14.0, 0.4)
-	FX.burst(center, color, 36, 10.0)
+	FX.bloom(center, NOVA_RADIUS, color)
+	FX.flash(center, color.lerp(Color(1.0, 0.9, 0.75), 0.4), 4.0, 12.0, 0.9)
 	Audio.play("nova", null, 0.0, 1.0, 0.03)
 	if weapon.element != WeaponData.Element.KINETIC:
 		Audio.play(ELEMENT_SOUNDS[weapon.element], null, 6.0, 0.8)

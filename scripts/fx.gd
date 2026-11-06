@@ -1,6 +1,6 @@
 extends Node
-## Short-lived visual effects (autoload "FX"): tracers, particle bursts, shockwave
-## rings, light flashes and floating damage numbers.
+## Short-lived visual effects (autoload "FX"): tracers, particle bursts, rings,
+## the Bloom flower, light flashes and floating damage numbers.
 
 
 func _scene() -> Node:
@@ -64,6 +64,69 @@ func ring(pos: Vector3, radius: float, color: Color, duration := 0.35) -> void:
 	tw.tween_property(mi, "scale", Vector3(radius, 1.0, radius), duration).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
 	tw.tween_property(mat, "albedo_color:a", 0.0, duration)
 	tw.chain().tween_callback(mi.queue_free)
+
+
+## Bloom: a flower of light opens at your feet, its petals unfurling, then a
+## wave of petals drifts out across `radius` and settles. Soft, not a blast.
+func bloom(pos: Vector3, radius: float, color: Color) -> void:
+	var root := Node3D.new()
+	_scene().add_child(root)
+	root.global_position = pos
+	var petal_mat := MeshKit.glow(color, 1.1, true)
+	petal_mat.albedo_color.a = 0.85
+	var heart_mat := MeshKit.glow(color.lerp(Color(1.0, 0.95, 0.7), 0.6), 3.0, true)
+	# The flower: two layers of petals that open from closed, lift a little,
+	# then fade.
+	for layer in 2:
+		var count := 8 if layer == 0 else 6
+		for k in count:
+			var hinge := Node3D.new()
+			hinge.rotation.y = TAU * k / count + layer * 0.3
+			root.add_child(hinge)
+			var petal := MeshKit.part(hinge, MeshKit.sphere(0.32 - layer * 0.08, 0.1, 8, 4), petal_mat, Vector3(0, 0, -0.38 + layer * 0.1))
+			petal.scale = Vector3(0.55, 1.0, 1.4)
+			petal.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			hinge.rotation.x = 1.3  # closed, petals pointing up
+			var tw := hinge.create_tween()
+			tw.tween_property(hinge, "rotation:x", -0.15 - layer * 0.25, 0.45).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT).set_delay(layer * 0.06)
+	var heart := MeshKit.part(root, MeshKit.sphere(0.12, 0.24, 8, 4), heart_mat, Vector3(0, 0.05, 0))
+	heart.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var grow := root.create_tween().set_parallel()
+	root.scale = Vector3.ONE * 0.4
+	grow.tween_property(root, "scale", Vector3.ONE * 1.6, 0.6).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	grow.tween_property(root, "position:y", root.position.y + 0.25, 1.4)
+	grow.tween_property(petal_mat, "albedo_color:a", 0.0, 1.0).set_delay(0.5)
+	grow.tween_property(heart_mat, "albedo_color:a", 0.0, 0.8).set_delay(0.6)
+	grow.chain().tween_callback(root.queue_free)
+	# The wave of petals drifting out and down.
+	var p := CPUParticles3D.new()
+	var leaf := MeshKit.sphere(0.07, 0.03, 6, 3)
+	leaf.material = MeshKit.glow(color.lerp(Color.WHITE, 0.2), 1.6)
+	p.mesh = leaf
+	p.one_shot = true
+	p.amount = 70
+	p.lifetime = 1.6
+	p.explosiveness = 0.9
+	p.direction = Vector3(1, 0.25, 0)
+	p.spread = 180.0
+	p.flatness = 0.85
+	p.initial_velocity_min = radius * 0.9
+	p.initial_velocity_max = radius * 1.4
+	p.damping_min = radius * 0.7
+	p.damping_max = radius * 0.9
+	p.gravity = Vector3(0, -0.6, 0)
+	p.angular_velocity_min = -360.0
+	p.angular_velocity_max = 360.0
+	p.particle_flag_rotate_y = true
+	var fade := Curve.new()
+	fade.add_point(Vector2(0, 1))
+	fade.add_point(Vector2(0.7, 0.8))
+	fade.add_point(Vector2(1, 0))
+	p.scale_amount_curve = fade
+	_scene().add_child(p)
+	p.global_position = pos + Vector3(0, 0.3, 0)
+	p.emitting = true
+	get_tree().create_timer(2.2).timeout.connect(p.queue_free)
 
 
 func flash(pos: Vector3, color: Color, energy := 4.0, light_range := 8.0, duration := 0.25) -> void:

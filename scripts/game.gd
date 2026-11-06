@@ -342,6 +342,7 @@ var shot_echo := false
 var shot_wisps := false
 var shot_pets_eat := false
 var shot_home := false
+var shot_bloom := false
 var shot_save_loaded := false
 var shot_help := false
 
@@ -520,6 +521,8 @@ func _parse_args() -> void:
 			"--shot-map":
 				shot_map = true
 				story_start = true
+			"--shot-bloom":
+				shot_bloom = true
 			"--shot-home":
 				shot_home = true
 				story_start = true
