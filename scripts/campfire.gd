@@ -44,7 +44,7 @@ func _ready() -> void:
 	for g in get_tree().get_nodes_in_group("gatherables"):
 		if (g as Gatherable).kind == "fire_ring" and (g as Node3D).global_position.distance_to(global_position) < 1.6:
 			g.queue_free()
-	_shape(self, MeshKit.mat(Color(0.42, 0.4, 0.38), 0.9), MeshKit.mat(Color(0.3, 0.2, 0.12)))
+	_make_shape()
 	var flame := CPUParticles3D.new()
 	var flame_mesh := MeshKit.sphere(0.1, 0.26, 6, 3)
 	flame_mesh.material = MeshKit.glow(Color(1.0, 0.55, 0.15), 6.0, true)
@@ -85,6 +85,16 @@ func _ready() -> void:
 	Audio.attach_loop(self, "loop_fire", 0.0, 22.0, 4.0)
 
 
+## The stones and wood (a hearth builds its own).
+func _make_shape() -> void:
+	_shape(self, MeshKit.mat(Color(0.42, 0.4, 0.38), 0.9), MeshKit.mat(Color(0.3, 0.2, 0.12)))
+
+
+## How far its warmth reaches.
+func warm_radius() -> float:
+	return WARM_RADIUS
+
+
 func _process(delta: float) -> void:
 	_t += delta
 	_light.light_energy = 2.4 + sin(_t * 13.0) * 0.25 + sin(_t * 7.3) * 0.35 + sin(_t * 23.0) * 0.12
@@ -97,7 +107,7 @@ func _process(delta: float) -> void:
 ## True when `pos` is close enough to any campfire to be warmed by it.
 static func warms(tree: SceneTree, pos: Vector3) -> bool:
 	for f in tree.get_nodes_in_group("campfires"):
-		if (f as Node3D).global_position.distance_to(pos) < WARM_RADIUS:
+		if (f as Node3D).global_position.distance_to(pos) < (f as Campfire).warm_radius():
 			return true
 	return false
 

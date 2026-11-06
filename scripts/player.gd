@@ -108,6 +108,8 @@ var _sit_forward := Vector3.FORWARD
 
 ## Building: the preview being placed, and a pause between "can't build here" thoughts.
 signal says(lines: Array)
+## A small menu of choices to show (heading, [label, Callable] pairs), e.g. a chest.
+signal menu_requested(heading: String, options: Array)
 var _placer: Placer
 var _cant_build_cooldown := 0.0
 
@@ -1209,7 +1211,20 @@ func _build(id: String, spot: Vector3, yaw: float) -> void:
 		"rain_catcher":
 			RainCatcher.build(get_parent(), spot).rotation.y = yaw
 			Game.practice("Survival", 3.0)
+		"hearth":
+			Hearth.build_hearth(get_parent(), spot, yaw)
+			Game.practice("Firecraft", 8.0)
+		"bedroll":
+			Bedroll.build(get_parent(), spot, yaw)
+			Game.practice("Woodcraft", 4.0)
+		"chest":
+			StorageChest.build(get_parent(), spot, yaw)
+			Game.practice("Woodcraft", 6.0)
+		"rain_cover":
+			RainCover.build(get_parent(), spot, yaw)
+			Game.practice("Woodcraft", 8.0)
 	Audio.play("nova", spot, -8.0, 0.6)
+	Game.built.emit(id, spot)
 
 
 func _punch() -> void:

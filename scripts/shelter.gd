@@ -27,11 +27,15 @@ static func ghost(material: Material) -> Node3D:
 	return g
 
 
-## True when `pos` is under the roof of any lean-to.
+## True when `pos` is under the roof of any lean-to or rain cover.
 static func covers(tree: SceneTree, pos: Vector3) -> bool:
 	for s in tree.get_nodes_in_group("shelters"):
 		var under := (s as Node3D).global_transform * Vector3(0, 0, -DEPTH * 0.45)
 		if Vector2(pos.x - under.x, pos.z - under.z).length() < COVER_RADIUS:
+			return true
+	for c in tree.get_nodes_in_group("rain_covers"):
+		var at := (c as Node3D).global_position
+		if Vector2(pos.x - at.x, pos.z - at.z).length() < RainCover.COVER_RADIUS:
 			return true
 	return false
 

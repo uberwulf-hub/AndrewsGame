@@ -13,10 +13,9 @@ var _crystal: Heartstone
 var _stone_mats: Array[StandardMaterial3D] = []
 var _leaf_mats: Array[StandardMaterial3D] = []
 var _bark: StandardMaterial3D
-var _obsidian: StandardMaterial3D
 var _iron: StandardMaterial3D
 var _rune_mat: StandardMaterial3D
-var _gold_rune_mat: StandardMaterial3D
+var _deep_moss_mat: StandardMaterial3D
 var _fire_mat: StandardMaterial3D
 var _env: Environment
 var _air_fog: Array = []
@@ -190,6 +189,7 @@ func _connect_story() -> void:
 	Game.learned.connect(_on_learned)
 	Game.sparked.connect(_on_sparked)
 	Game.rest_requested.connect(_pass_the_night)
+	Game.built.connect(_on_built)
 
 
 # --- Saving and loading ------------------------------------------------------
@@ -211,6 +211,7 @@ func save_game() -> bool:
 		"sanctum_found": _sanctum_found,
 		"echoes": Array(_echoes),
 		"woken": range(_buds.size()).filter(func(i): return _buds[i].awake),
+		"home_step": _home_step,
 		"food_at_start": _food_at_start,
 		"cooking_hinted": _cooking_hinted,
 		"fox": [_fox._tips_given, _fox._feelings],
@@ -248,6 +249,9 @@ func _resume(player: Player, hud: Hud, data: Dictionary) -> void:
 	for i in s.get("woken", []):
 		if i < _buds.size():
 			_buds[i].wake(false)
+	_home_step = s.get("home_step", -1)
+	if _woken() == _buds.size() and _home_step < 0:
+		get_tree().create_timer(25.0).timeout.connect(_start_home)
 	if _echoes.has("aim"):
 		get_tree().create_timer(20.0).timeout.connect(_start_wake_quest)
 	_food_at_start = s.food_at_start
@@ -662,7 +666,75 @@ func _on_bud_shot(bud: WispBud) -> void:
 			_otter.say(["Look! The stones are all lit up!", "It feels kind of... cozy here now. Like it could be home."]))
 		get_tree().create_timer(9.0).timeout.connect(func():
 			_fox.say(["Not bad. You only missed, what, forty times?", "Kidding. ...Mostly."]))
+		get_tree().create_timer(18.0).timeout.connect(_start_home)
 	get_tree().create_timer(12.0).timeout.connect(_autosave)
+
+
+# --- Making it home ------------------------------------------------------------
+# Once the stones are lit, the Otter wants to make the Sanctum home. One idea
+# at a time: a hearth, then a bedroll (and a nap on it), a storage chest and a
+# rain cover, each built inside the stone circle. Each one done, the next idea.
+
+const HOME_STEPS := [
+	["hearth", "Build a hearth in the Sanctum (Tab → Know-how)", "otter",
+		["What if we made this place our HOME? Like, for real?", "First, a proper hearth! Big stones, right here in the circle."]],
+	["sleep", "Make a bedroll in the Sanctum and sleep on it", "otter",
+		["Ooh, it's so warm! Now we need somewhere to sleep.", "A bedroll! Ferns for squishy, vines to tie it up."]],
+	["chest", "Build a storage chest in the Sanctum", "fox",
+		["Your pockets are bulging. It's honestly embarrassing.", "Build a chest. Put your sticks in it like a civilized person."]],
+	["rain_cover", "Put up a rain cover in the Sanctum", "otter",
+		["Last idea, I promise! A roof, for when it rains.", "Four poles and lots of ferns. Over the hearth would be SO cozy."]],
+]
+const TEACHES := {"hearth": "hearth", "sleep": "bedroll", "chest": "chest", "rain_cover": "rain_cover"}
+const SANCTUM_REACH := 13.0  # "in the Sanctum": inside the stone circle, give or take
+
+## Which home step is next (-1 before it starts, HOME_STEPS.size() when done).
+var _home_step := -1
+var _told_inside := false
+
+
+func _start_home() -> void:
+	if _home_step >= 0 or _otter == null:
+		return
+	_home_step = 0
+	Game.start_quest("home", "Make It Home", [HOME_STEPS[0][1]], false, "Otter")
+	_suggest_home(0)
+
+
+## The pet whose idea it is says it, and the hero learns how.
+func _suggest_home(step: int) -> void:
+	var s: Array = HOME_STEPS[step]
+	var pet: Companion = _otter if s[2] == "otter" else _fox
+	pet.say(s[3])
+	Game.learn(TEACHES[s[0]], [], "Otter" if s[2] == "otter" else "Fox")
+
+
+func _on_built(id: String, at: Vector3) -> void:
+	if _home_step < 0 or _home_step >= HOME_STEPS.size() or HOME_STEPS[_home_step][0] != id:
+		return
+	if Vector2(at.x, at.z).length() > SANCTUM_REACH:
+		if not _told_inside and _otter:
+			_told_inside = true
+			_otter.say(["Ooh, nice! But I meant in the stone circle,", "so everything's together. Home, you know?"])
+		return
+	var q := Game.quest("home")
+	if not q.is_empty():
+		Game.set_step("home", q.steps.size() - 1, q.steps[-1].text, true)
+	_home_step += 1
+	if _home_step < HOME_STEPS.size():
+		if not q.is_empty():
+			q.steps.append({"text": HOME_STEPS[_home_step][1], "done": false})
+			Game.quests_changed.emit()
+		get_tree().create_timer(4.0).timeout.connect(_suggest_home.bind(_home_step))
+	else:
+		Game.complete_quest("home")
+		Game.notify("The Sanctum is home now.", Color(1.0, 0.9, 0.6))
+		if _otter and _fox:
+			get_tree().create_timer(2.5).timeout.connect(func():
+				_otter.say(["We did it! It's a real home now!", "Hearth, beds, a chest, a roof... we should get a welcome mat."]))
+			get_tree().create_timer(9.0).timeout.connect(func():
+				_fox.say(["Not bad. I give it four tails out of five.", "...Okay, five. Don't let it go to your head."]))
+	get_tree().create_timer(10.0).timeout.connect(_autosave)
 
 
 func _process(delta: float) -> void:
@@ -765,12 +837,11 @@ func _make_materials() -> void:
 		_leaf_mats.append(MeshKit.mat(c, 0.9))
 	_leaf_mats.append(MeshKit.glow(Color(0.55, 0.42, 1.0), 0.9))
 	_bark = MeshKit.mat(Color(0.33, 0.24, 0.17), 0.95)
-	_obsidian = MeshKit.mat(Color(0.14, 0.14, 0.19), 0.25, 0.6)
 	_iron = MeshKit.mat(Color(0.22, 0.22, 0.25), 0.4, 0.8)
 	# The old carvings have long since grown over: moss in the grooves, and
 	# here and there a crust of golden lichen.
 	_rune_mat = MeshKit.mat(Color(0.3, 0.45, 0.2), 0.95)
-	_gold_rune_mat = MeshKit.mat(Color(0.7, 0.6, 0.25), 0.95)
+	_deep_moss_mat = MeshKit.mat(Color(0.22, 0.36, 0.16), 0.95)
 	_fire_mat = MeshKit.glow(Color(1.0, 0.5, 0.15), 6.0)
 
 
@@ -1570,51 +1641,85 @@ func _rock(p: Vector3) -> void:
 	body.add_child(shape)
 
 
+## Old ruins, weathered and mossy: a broken column, a crumbling wall, or an
+## arch. (Draws from _rng exactly as the older version did, so the world's
+## layout doesn't shift; the extra details roll their own dice.)
 func _ruin(p: Vector3) -> void:
 	var stone: StandardMaterial3D = _stone_mats[_rng.randi() % _stone_mats.size()]
+	var moss := _rune_mat  # moss green since the mythic restyle
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector2i(roundi(p.x * 10.0), roundi(p.z * 10.0))) + 7
 	match _rng.randi() % 3:
 		0:
+			# A column snapped off partway, moss on the break, a fallen piece beside it.
 			var body := _static_at(_seated(p, 0.7, 0.1), _rng.randf() * TAU)
-			body.rotation.z = _rng.randf_range(-0.2, 0.2)
-			var h := _rng.randf_range(2.5, 6.5)
-			_add_cylinder(body, 0.45, 0.55, h, Vector3(0, h * 0.5 - 0.3, 0), stone, 8)
+			body.rotation.z = _rng.randf_range(-0.2, 0.2) * 0.4
+			var h := _rng.randf_range(2.5, 6.5) * 0.7
+			_add_cylinder(body, 0.42, 0.56, h, Vector3(0, h * 0.5 - 0.3, 0), stone, 6)
+			MeshKit.part(body, MeshKit.sphere(0.46, 0.25, 6, 3), moss, Vector3(0, h - 0.32, 0)).rotation.z = rng.randf_range(-0.3, 0.3)
+			MeshKit.part(body, MeshKit.cyl(0.55, 0.6, 0.5, 6), _deep_moss_mat, Vector3(0, -0.1, 0))
 			if _rng.randf() < 0.5:
-				MeshKit.part(body, MeshKit.cyl(0.5, 0.5, 0.12, 8), _rune_mat, Vector3(0, h * 0.55, 0))
+				var drum := rng.randf_range(0.8, 1.4)
+				MeshKit.part(body, MeshKit.cyl(0.44, 0.44, drum, 6), stone, Vector3(1.3, 0.1, rng.randf_range(-0.5, 0.5)), Vector3(0, rng.randf() * TAU, PI / 2))
 		1:
+			# A stretch of old wall, its top worn ragged and grown over.
 			var w := _rng.randf_range(3.0, 7.0)
 			var body := _static_at(_seated(p, w * 0.5, 0.0), _rng.randf() * TAU)
 			var h := _rng.randf_range(1.5, 3.5)
 			_add_box(body, Vector3(w, h, 0.7), Vector3(0, h * 0.5 - 0.3, 0), Vector3.ZERO, stone)
 			_add_box(body, Vector3(w * 0.4, h * 0.6, 0.7), Vector3(w * 0.3, h - 0.3 + h * 0.3, 0), Vector3.ZERO, stone)
-			var strip: StandardMaterial3D = _gold_rune_mat if _rng.randf() < 0.3 else _rune_mat
-			MeshKit.part(body, MeshKit.box(Vector3(w * 0.8, 0.08, 0.72)), strip, Vector3(0, h * 0.6, 0))
+			MeshKit.part(body, MeshKit.box(Vector3(w * 0.6, 0.1, 0.78)), moss, Vector3(-w * 0.2, h - 0.27, 0))
+			MeshKit.part(body, MeshKit.box(Vector3(w * 0.42, 0.1, 0.78)), moss, Vector3(w * 0.3, h * 1.6 - 0.27, 0))
+			MeshKit.part(body, MeshKit.box(Vector3(w + 0.1, 0.45, 0.8)), _deep_moss_mat, Vector3(0, -0.12, 0))
+			_rng.randf()  # was the old stripe's colour roll; kept so the layout holds
+			for k in rng.randi_range(2, 4):  # rubble at the foot
+				MeshKit.part(body, MeshKit.sphere(0.25, 0.3, 6, 3), stone,
+					Vector3(rng.randf_range(-w * 0.5, w * 0.5), 0.0, rng.randf_range(0.6, 1.1) * (1.0 if k % 2 else -1.0)))
 		_:
+			# An arch still standing, moss along the lintel.
 			var span := _rng.randf_range(3.0, 4.5)
 			var body := _static_at(_seated(p, span * 0.5 + 0.5, 0.0), _rng.randf() * TAU)
 			var h := _rng.randf_range(3.5, 5.0)
 			for side in [-1.0, 1.0]:
 				_add_box(body, Vector3(0.8, h, 0.8), Vector3(span * 0.5 * side, h * 0.5 - 0.2, 0), Vector3.ZERO, stone)
+				MeshKit.part(body, MeshKit.box(Vector3(0.9, 0.5, 0.9)), _deep_moss_mat, Vector3(span * 0.5 * side, 0.0, 0))
 			_add_box(body, Vector3(span + 1.4, 0.7, 1.0), Vector3(0, h, 0), Vector3.ZERO, stone)
-			MeshKit.part(body, MeshKit.box(Vector3(span * 0.6, 0.12, 1.02)), _rune_mat, Vector3(0, h, 0))
+			MeshKit.part(body, MeshKit.box(Vector3(span + 1.2, 0.1, 0.9)), moss, Vector3(0, h + 0.38, 0))
 
 
+## A lone standing stone out in the wilds, like the Sanctum's but taller and
+## older: rough, tapering, leaning a little, moss on its head and climbing up
+## from its foot. Sometimes a smaller one stands beside it.
 func _monolith(p: Vector3) -> void:
-	var body := _static_at(_seated(p, 0.8, 0.2), _rng.randf() * TAU)
-	_add_box(body, Vector3(1.4, 7.0, 0.7), Vector3(0, 3.2, 0), Vector3.ZERO, _obsidian)
-	for k in 4:
-		MeshKit.part(body, MeshKit.box(Vector3(1.0 - k * 0.15, 0.08, 0.72)), _rune_mat, Vector3(0, 1.5 + k * 1.3, 0))
-	MeshKit.part(body, MeshKit.box(Vector3(0.08, 5.5, 0.72)), _rune_mat, Vector3(0, 3.6, 0))
-	MeshKit.part(body, MeshKit.sphere(0.4, 1.2, 4, 2), _rune_mat, Vector3(0, 8.0, 0))
-	var light := OmniLight3D.new()
-	light.light_color = Color(0.7, 0.9, 0.8)
-	light.light_energy = 0.4
-	light.omni_range = 6.0
-	light.position = Vector3(0, 4.0, 1.0)
-	body.add_child(light)
-	var hum := Audio.attach_loop(body, "loop_crystal", -8.0, 16.0, 3.0)
-	if hum:
-		hum.position.y = 4.0
-		hum.pitch_scale = _rng.randf_range(0.7, 0.9)
+	# Its own dice, so the rest of the world lays out exactly as it always has
+	# (this draws from _rng just as many times as the old monolith did).
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector2i(roundi(p.x * 10.0), roundi(p.z * 10.0)))
+	var yaw := _rng.randf() * TAU
+	_rng.randf()
+	var moss := MeshKit.mat(Color(0.3, 0.44, 0.2), 0.95)
+	var deep_moss := MeshKit.mat(Color(0.22, 0.36, 0.16), 0.95)
+	var body := _static_at(_seated(p, 0.8, 0.2), yaw)
+	var stones := [[Vector3.ZERO, rng.randf_range(4.0, 6.0), 1.0]]
+	if rng.randf() < 0.4:
+		stones.append([Vector3(rng.randf_range(1.4, 1.9), 0, rng.randf_range(-0.4, 0.4)), rng.randf_range(1.8, 2.8), 0.75])
+	for s in stones:
+		var at: Vector3 = s[0]
+		var h: float = s[1]
+		var w: float = s[2]
+		var lean := Vector3(rng.randf_range(-0.08, 0.08), rng.randf_range(-0.3, 0.3), rng.randf_range(-0.08, 0.08))
+		var flat := Vector3(1.5 * w, 1.0, 0.8 * w)
+		var stone: StandardMaterial3D = _stone_mats[rng.randi() % _stone_mats.size()]
+		MeshKit.part(body, MeshKit.cyl(0.3, 0.48, h, 6), stone, at + Vector3(0, h * 0.5 - 0.2, 0), lean).scale = flat
+		MeshKit.part(body, MeshKit.sphere(0.33, 0.24, 7, 3), moss, at + Vector3(0, h - 0.3, 0), lean).scale = flat
+		MeshKit.part(body, MeshKit.cyl(0.46, 0.5, h * 0.2, 6), deep_moss, at + Vector3(0, h * 0.1 - 0.2, 0), lean).scale = flat
+		var shape := CollisionShape3D.new()
+		var box := BoxShape3D.new()
+		box.size = Vector3(0.8 * w, h, 0.5 * w)
+		shape.shape = box
+		shape.position = at + Vector3(0, h * 0.5 - 0.2, 0)
+		shape.rotation = lean
+		body.add_child(shape)
 
 
 # --- Camps -------------------------------------------------------------------
@@ -1769,6 +1874,63 @@ func _deepest_point() -> Vector3:
 
 func _take_screenshot() -> void:
 	await get_tree().create_timer(Game.screenshot_delay).timeout
+	if Game.shot_home:
+		# Make It Home, start to finish: each piece placed on the Sanctum floor
+		# the way the player would, a nap on the bedroll, the chest used.
+		var pl := Game.player
+		pl._end_wake()
+		await get_tree().create_timer(36.0).timeout  # through the opening lines
+		for c in [_fox, _otter]:
+			if c._zzz:
+				c._zzz.queue_free()
+			c.body.rotation.z = 0.0
+			c.follow()
+			c._forage_timer = 999.0
+		for item in ["Stones", "Sticks", "Ferns", "Vines"]:
+			Game.add_item(item, 40)
+		_start_home()
+		var put := func(id: String, x: float, z: float) -> void:
+			pl.global_position = Vector3(x, 3.0, z)
+			pl.velocity = Vector3.ZERO
+			pl._yaw = 0.0
+			pl._pitch = -0.3
+			await get_tree().create_timer(0.8).timeout
+			var ok := pl.begin_placing(id)
+			await get_tree().create_timer(0.3).timeout
+			var spot := pl._placer.global_position if ok else Vector3.ZERO
+			var valid := ok and pl._placer.valid
+			print("%s: known %s, preview at %s valid %s (terrain %.2f)" % [id, Game.known.has(id), spot.snapped(Vector3.ONE * 0.01), valid, Game.ground_at(spot.x, spot.z)])
+			if valid:
+				pl._build(id, spot, pl._placer.rotation.y)
+			pl.cancel_placing()
+			await get_tree().create_timer(5.0).timeout  # the next idea comes after a moment
+			print("  -> home step %d, quest %s" % [_home_step, Game.quest("home").get("steps", "done")])
+		await put.call("hearth", 0.0, 7.8)
+		await put.call("bedroll", -3.0, 5.5)
+		var bed := get_tree().get_first_node_in_group("bedrolls") as Bedroll
+		if bed:
+			bed.use(pl)
+			await get_tree().create_timer(5.5).timeout
+		print("after nap: rested %.0f s, frozen %s, home step %d" % [Game.rested, pl.frozen, _home_step])
+		await get_tree().create_timer(5.0).timeout  # the Fox's idea
+		await put.call("chest", 3.2, 5.3)
+		Game.stash_all()
+		print("stashed: %s, pockets sticks %d" % [Game.stash, Game.inventory.get("Sticks", 0)])
+		Game.unstash_all()
+		await put.call("rain_cover", 0.0, 7.6)
+		print("covered at hearth: %s, done %s, quest left %s" % [Shelter.covers(get_tree(), Vector3(0, 0, 5.0)), _home_step, not Game.quest("home").is_empty()])
+		pl.global_position = Vector3(5.5, 3.0, 12.5)
+		pl._yaw = 0.42
+		pl._pitch = -0.3
+		await get_tree().create_timer(2.0).timeout
+		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.get_basename() + "_home.png")
+		pl.global_position = Vector3(-2.5, 3.0, 9.5)
+		pl._yaw = -0.35
+		pl._pitch = -0.45
+		await get_tree().create_timer(1.5).timeout
+		get_viewport().get_texture().get_image().save_png(Game.screenshot_path.get_basename() + "_home2.png")
+		get_tree().quit()
+		return
 	if Game.shot_pets_eat:
 		# Hungry pets: they snack on food lying nearby, then eat their own
 		# find instead of bringing it back; a fed pet still brings his back.

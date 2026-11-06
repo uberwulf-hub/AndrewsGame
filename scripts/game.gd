@@ -104,13 +104,55 @@ static func level_floor_xp(level: int) -> float:
 ## Practice makes perfect: doing something raises the skill behind it.
 func practice(skill: String, xp := 1.0) -> void:
 	var before := skill_level(skill)
-	skills[skill] = skills.get(skill, 0.0) + xp
+	skills[skill] = skills.get(skill, 0.0) + xp * (RESTED_BONUS if rested > 0.0 else 1.0)
 	var after := skill_level(skill)
 	if after > before:
 		notify("%s improved to %d" % [skill, after], Color(0.7, 1.0, 0.6))
 		skill_leveled.emit(skill, after)
 
 
+
+
+# --- Home ----------------------------------------------------------------------
+# What's put away in storage chests (shared by them all), the rested bonus
+# from sleeping on a bedroll, and a signal when something gets built.
+
+signal built(id: String, at: Vector3)
+## Materials put away in a chest, by name.
+var stash := {}
+## Seconds of "well rested" left: skills grow faster while it lasts.
+var rested := 0.0
+const RESTED_TIME := 600.0
+const RESTED_BONUS := 1.5
+## Things a chest takes: building materials, not food or what you carry.
+const STASHABLE := ["Sticks", "Stones", "Ferns", "Vines", "Birch bark", "Charcoal"]
+
+
+func stash_all() -> int:
+	var moved := 0
+	for item in STASHABLE:
+		var n: int = inventory.get(item, 0)
+		if n > 0:
+			take_items(item, n)
+			stash[item] = stash.get(item, 0) + n
+			moved += n
+	return moved
+
+
+func unstash_all() -> int:
+	var moved := 0
+	for item in stash.keys():
+		add_item(item, stash[item])
+		moved += stash[item]
+	stash.clear()
+	return moved
+
+
+func _process(delta: float) -> void:
+	if rested > 0.0 and not get_tree().paused:
+		rested = maxf(0.0, rested - delta)
+		if rested == 0.0:
+			notify("You're not feeling so fresh any more. (Well rested wore off.)", Color(0.85, 0.85, 0.75))
 # --- Know-how ------------------------------------------------------------------
 # Things the hero has figured out how to make. Nothing is known at the start:
 # each one is discovered by noticing something in the world (an old fire ring
@@ -131,6 +173,15 @@ const KNOW_HOW := {
 		"about": "Birch bark tied onto a stick with a vine, lit. Light, and a little warmth, wherever you put it."},
 	"rain_catcher": {"name": "Rain catcher", "needs": {"Sticks": 3, "Birch bark": 2, "Vines": 1},
 		"about": "A bark bowl on a little frame. Dew and rain collect in it: drink, and top up your canteen."},
+	# Making the Sanctum home: the Otter's ideas, one at a time.
+	"hearth": {"name": "Hearth", "needs": {"Stones": 10, "Sticks": 4},
+		"about": "A big ring of flat stones with a low wall at the back. Warms a wide circle, and cooks like a campfire."},
+	"bedroll": {"name": "Bedroll", "needs": {"Ferns": 6, "Vines": 2},
+		"about": "Ferns bundled soft and tied with vines. Sleep on it (E) and wake up well rested: skills grow faster for a while."},
+	"chest": {"name": "Storage chest", "needs": {"Sticks": 8, "Vines": 3},
+		"about": "A woven twig chest with a lid. Put your materials away (E) so your pockets stay light."},
+	"rain_cover": {"name": "Rain cover", "needs": {"Sticks": 8, "Ferns": 8, "Vines": 2},
+		"about": "Four poles and a thatched fern roof. Keeps the wind and rain off whatever's under it."},
 	# Not built: made and carried (Make, in Know-how).
 	"map": {"name": "Map", "needs": {"Charcoal": 1, "Birch bark": 2}, "carried": true,
 		"about": "Charcoal from the fire, drawn on birch bark. Shows everywhere you've been. M to look at it."},
@@ -290,6 +341,7 @@ var shot_tools := false
 var shot_echo := false
 var shot_wisps := false
 var shot_pets_eat := false
+var shot_home := false
 var shot_save_loaded := false
 var shot_help := false
 
@@ -467,6 +519,9 @@ func _parse_args() -> void:
 				shot_tools = true
 			"--shot-map":
 				shot_map = true
+				story_start = true
+			"--shot-home":
+				shot_home = true
 				story_start = true
 			"--shot-pets-eat":
 				shot_pets_eat = true

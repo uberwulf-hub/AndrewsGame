@@ -67,6 +67,8 @@ func refresh() -> void:
 		_bar(_left, "Warmth", Game.warmth / 100.0, Color(1.0, 0.6, 0.25))
 		_bar(_left, "Food", Game.hunger / 100.0, Color(0.6, 0.85, 0.35))
 		_bar(_left, "Water", Game.thirst / 100.0, Color(0.4, 0.7, 1.0))
+		if Game.rested > 0.0:
+			_text(_left, "Well rested: skills grow faster (%d min left)" % ceili(Game.rested / 60.0), Color(1.0, 0.9, 0.6))
 	_heading(_left, "Skills", 22)
 	for skill in Game.SKILLS + Game.REMEMBERED_SKILLS.filter(func(s): return Game.skills.has(s)):
 		_skill_bar(skill, skill, Color(0.75, 0.6, 1.0))

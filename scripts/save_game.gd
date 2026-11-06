@@ -46,7 +46,10 @@ static func write(tree: SceneTree, story: Dictionary) -> bool:
 	var p := Game.player
 	var built := []
 	for c in tree.get_nodes_in_group("campfires"):
-		built.append(["campfire", (c as Node3D).global_position, 0.0])
+		built.append(["hearth" if c is Hearth else "campfire", (c as Node3D).global_position, (c as Node3D).rotation.y])
+	for group in [["bedrolls", "bedroll"], ["chests", "chest"], ["rain_covers", "rain_cover"]]:
+		for n in tree.get_nodes_in_group(group[0]):
+			built.append([group[1], (n as Node3D).global_position, (n as Node3D).rotation.y])
 	for s in tree.get_nodes_in_group("shelters"):
 		built.append(["lean_to", (s as Node3D).global_position, (s as Node3D).rotation.y])
 	for t in tree.get_nodes_in_group("torches"):
@@ -73,6 +76,8 @@ static func write(tree: SceneTree, story: Dictionary) -> bool:
 			"backpack": Array(Game.backpack),
 			"is_night": Game.is_night,
 			"rest_ready": Game.rest_ready,
+			"stash": Game.stash.duplicate(),
+			"rested": Game.rested,
 		},
 		"player": {
 			"pos": p.global_position,
@@ -112,6 +117,8 @@ static func restore_game(data: Dictionary) -> void:
 	Game.canteen_sips = g.canteen_sips
 	Game.backpack.assign(g.backpack)
 	Game.rest_ready = g.rest_ready
+	Game.stash = g.get("stash", {}).duplicate()
+	Game.rested = g.get("rested", 0.0)
 	Game.inventory_changed.emit()
 	Game.quests_changed.emit()
 
@@ -142,3 +149,11 @@ static func restore_built(data: Dictionary, parent: Node) -> void:
 				TorchPost.build(parent, at)
 			"rain_catcher":
 				RainCatcher.build(parent, at).rotation.y = b[2]
+			"hearth":
+				Hearth.build_hearth(parent, at, b[2])
+			"bedroll":
+				Bedroll.build(parent, at, b[2])
+			"chest":
+				StorageChest.build(parent, at, b[2])
+			"rain_cover":
+				RainCover.build(parent, at, b[2])

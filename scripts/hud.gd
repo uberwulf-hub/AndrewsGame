@@ -217,6 +217,7 @@ func bind(player: Player) -> void:
 	player.heartbeat.connect(func(_panic: float): _pulse = 1.0)
 	player.talk_requested.connect(_talk.open)
 	player.fire_requested.connect(_open_fire)
+	player.menu_requested.connect(_talk.open_menu)
 	player.damaged.connect(func(_amount: float): _damage_flash.color.a = 0.18)
 	player.leveled_up.connect(func(new_level: int): notify("Level %d! Health and damage increased" % new_level, Color(1, 0.85, 0.3)))
 	player.died.connect(func(): _death_overlay.visible = true)
