@@ -14,6 +14,8 @@ const KINDS := {
 		"spark_thought": ["These vines are tough. Like rope.", "...I bet the Otter would have an idea for these."]},
 	"bark": {"item": "Birch bark", "count": [2, 3], "skill": "Woodcraft", "verb": "Peel some birch bark", "sparks": "rain_catcher",
 		"spark_thought": ["Birch bark. Papery, and it doesn't soak up water.", "...I bet the Otter would have an idea for this."]},
+	# Washed up along the lake shore: bleached and light, it floats.
+	"driftwood": {"item": "Driftwood", "count": [1, 1], "skill": "Woodcraft", "verb": "Pick up the driftwood"},
 	# Brought back by the Fox and the Otter and dropped at your feet.
 	"grubs": {"item": "Grubs", "count": [2, 3], "skill": "Foraging", "verb": "Take the grubs (ew)"},
 	"mushrooms": {"item": "Mushrooms", "count": [2, 3], "skill": "Foraging", "verb": "Take the mushrooms"},
@@ -104,6 +106,17 @@ func _build(rng: RandomNumberGenerator) -> void:
 				var stick := MeshKit.part(_visual, MeshKit.cyl(0.03, 0.042, rng.randf_range(0.75, 1.05), 6), bark,
 					Vector3(rng.randf_range(-0.12, 0.12), 0.05 + k * 0.035, rng.randf_range(-0.12, 0.12)))
 				stick.rotation = Vector3(PI / 2 + rng.randf_range(-0.2, 0.2), (k % 2) * 0.9 + rng.randf_range(-0.3, 0.3), 0)
+		"driftwood":
+			# A silvery, sun-bleached log with a stubby branch or two.
+			var bleached := _readable(Color(0.78, 0.74, 0.66))
+			var length := rng.randf_range(1.3, 1.9)
+			var log_piece := MeshKit.part(_visual, MeshKit.cyl(0.1, 0.14, length, 7), bleached, Vector3(0, 0.11, 0))
+			log_piece.rotation = Vector3(PI / 2 + rng.randf_range(-0.08, 0.08), 0, 0)
+			for k in rng.randi_range(1, 2):
+				var z := rng.randf_range(-0.5, 0.5) * length * 0.6
+				var twig := MeshKit.part(_visual, MeshKit.cyl(0.025, 0.05, rng.randf_range(0.35, 0.6), 5), bleached,
+					Vector3(0.12 * (1 if k == 0 else -1), 0.2, z))
+				twig.rotation = Vector3(rng.randf_range(-0.6, 0.6), 0, (0.9 if k == 0 else -0.9))
 		"stones":
 			var stone := _readable(Color(0.72, 0.7, 0.66))
 			for k in rng.randi_range(3, 4):

@@ -466,6 +466,9 @@ func _physics_process(delta: float) -> void:
 	if knocked_out:
 		_update_knocked_out(delta)
 		return
+	if raft:
+		_ride(delta)
+		return
 	if frozen:
 		if seated:
 			_update_seated()
@@ -927,6 +930,15 @@ func _update_needs(delta: float) -> void:
 			if _dive_practice > 6.0:
 				_dive_practice = 0.0
 				Game.practice("Diving", 1.0)
+	if raft:
+		# On the raft E only hops off: nothing else to pick or talk to.
+		if is_instance_valid(focused_gatherable):
+			focused_gatherable.set_focused(false)
+		focused = null
+		focused_gatherable = null
+		focused_companion = null
+		focused_usable = null
+		return
 	_update_gather_focus()
 
 
@@ -1238,8 +1250,98 @@ func _build(id: String, spot: Vector3, yaw: float) -> void:
 		"rain_cover":
 			RainCover.build(get_parent(), spot, yaw)
 			Game.practice("Woodcraft", 8.0)
+		"raft":
+			Raft.build(get_parent(), spot, yaw)
+			Game.practice("Woodcraft", 8.0)
+			Audio.play("splash_in", spot, -4.0, 0.7)
 	Audio.play("nova", spot, -8.0, 0.6)
 	Game.built.emit(id, spot)
+
+
+# --- The raft ------------------------------------------------------------------
+# Sitting on the raft, cross-legged, paddling toward where you look. The pets
+# close by hop on with you. E hops off onto a dock or shore in reach, or else
+# into the water.
+
+var raft: Raft
+const PET_RIDE_REACH := 12.0
+
+
+func board(r: Raft) -> void:
+	cancel_placing()
+	if swimming:
+		swimming = false
+		_legs.rotation.y = _swim_facing
+		_torso.rotation.y = _swim_facing
+		_model.transform = Transform3D.IDENTITY
+	raft = r
+	r.boarded(self)
+	velocity = Vector3.ZERO
+	_feet_wet = false
+	_sitting = true
+	if _rig:
+		_rig.play("sit", 1.0, 0.4)
+	for comp in get_tree().get_nodes_in_group("companions"):
+		var pet := comp as Companion
+		if pet.state == Companion.State.FOLLOWING and pet.body.global_position.distance_to(r.global_position) < PET_RIDE_REACH:
+			pet.ride(r, Raft.FOX_SEAT if pet.who == "fox" else Raft.OTTER_SEAT)
+
+
+## Off the raft: onto a dock or the shore if there's one in reach (the pets
+## hop off after), or else into the water (they stay aboard, dry).
+func leave_raft() -> void:
+	if raft == null:
+		return
+	var r := raft
+	var land := r.landing()
+	raft = null
+	r.left()
+	_sitting = false
+	if _rig:
+		_rig.play("idle", 1.0, 0.4)
+	if land == Vector3.INF:
+		var side := r.global_basis.x * (Raft.WIDTH * 0.5 + 0.7)
+		global_position = r.global_position + side + Vector3.DOWN * 1.2
+		Audio.play("splash_in", global_position, -2.0)
+		FX.burst(Vector3(global_position.x, Game.WATER_LEVEL, global_position.z), Color(0.8, 0.95, 1.0), 18, 4.0, 0.07)
+		return
+	global_position = land
+	velocity = Vector3.ZERO
+	Audio.play("land", null, -2.0)
+	var k := 0
+	for comp in get_tree().get_nodes_in_group("companions"):
+		var pet := comp as Companion
+		if pet.state == Companion.State.RIDING:
+			k += 1
+			pet.hop_off(land + r.global_basis.x * (0.9 if k == 1 else -0.9))
+
+
+func _ride(delta: float) -> void:
+	var r := raft
+	if not is_instance_valid(r):
+		raft = null
+		_sitting = false
+		return
+	var input := Vector2.ZERO
+	if not frozen:
+		input = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	var wish := Basis(Vector3.UP, _yaw) * Vector3(input.x, 0.0, input.y)
+	r.paddle(wish, Input.is_action_pressed("sprint") and not frozen, delta)
+	global_position = r.seat(Raft.SEAT)
+	velocity = Vector3.ZERO
+	var facing := r.rotation.y
+	_sit_forward = -r.global_basis.z
+	_legs.rotation.y = facing
+	_torso.rotation.y = facing
+	if _rig:
+		_rig.rotation.y = facing
+	_clamp_to_world()
+	if frozen:
+		return
+	if Input.is_action_just_pressed("interact"):
+		leave_raft()
+		return
+	_update_needs(delta)
 
 
 func _punch() -> void:

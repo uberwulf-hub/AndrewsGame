@@ -125,7 +125,7 @@ var rested := 0.0
 const RESTED_TIME := 600.0
 const RESTED_BONUS := 1.5
 ## Things a chest takes: building materials, not food or what you carry.
-const STASHABLE := ["Sticks", "Stones", "Ferns", "Vines", "Birch bark", "Charcoal"]
+const STASHABLE := ["Sticks", "Stones", "Ferns", "Vines", "Birch bark", "Charcoal", "Driftwood"]
 
 
 func stash_all() -> int:
@@ -182,6 +182,9 @@ const KNOW_HOW := {
 		"about": "A woven twig chest with a lid. Put your materials away (E) so your pockets stay light."},
 	"rain_cover": {"name": "Rain cover", "needs": {"Sticks": 8, "Ferns": 8, "Vines": 2},
 		"about": "Four poles and a thatched fern roof. Keeps the wind and rain off whatever's under it."},
+	# The Otter's idea for getting out to the little house on the water.
+	"raft": {"name": "Raft", "needs": {"Driftwood": 4, "Vines": 3},
+		"about": "Driftwood logs lashed together with vines. Build it on the water by the shore, climb aboard (E) and paddle."},
 	# Not built: made and carried (Make, in Know-how).
 	"map": {"name": "Map", "needs": {"Charcoal": 1, "Birch bark": 2}, "carried": true,
 		"about": "Charcoal from the fire, drawn on birch bark. Shows everywhere you've been. M to look at it."},
@@ -343,6 +346,7 @@ var shot_wisps := false
 var shot_pets_eat := false
 var shot_home := false
 var shot_lake := false
+var shot_isle := false
 var shot_bloom := false
 var shot_save_loaded := false
 var shot_help := false
@@ -380,7 +384,18 @@ func height_at(x: float, z: float) -> float:
 	h = lerpf(0.6, h, smoothstep(16.0, 40.0, d))
 	var edge := clampf((d - 165.0) / 45.0, 0.0, 1.0)
 	h += edge * edge * 40.0
+	# The little island out in the lake (with the house on it): a low, flat
+	# top that slopes away into deep water.
+	var isle := Vector2(x - ISLE.x, z - ISLE.y).length()
+	if isle < 10.0:
+		var wobble := sin(x * 0.9) * 0.08 + cos(z * 1.1) * 0.08
+		h = maxf(h, lerpf(WATER_LEVEL + 0.85 + wobble, -4.6, smoothstep(4.2, 9.5, isle)))
 	return h
+
+
+## Where the little island is: out in the lake, about 35 m in front of the old
+## stones on the shore (LakeRuin), past where the river stone lies.
+const ISLE := Vector2(-56.0, -30.0)
 
 
 ## Height of the rendered terrain surface. The mesh is a grid of flat triangles, so
@@ -526,6 +541,9 @@ func _parse_args() -> void:
 				shot_bloom = true
 			"--shot-lake":
 				shot_lake = true
+				story_start = true
+			"--shot-isle":
+				shot_isle = true
 				story_start = true
 			"--shot-home":
 				shot_home = true

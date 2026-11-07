@@ -44,6 +44,7 @@ func _ready() -> void:
 		_create_camps()
 	_place_starter_loot()
 	_build_lake_ruin()
+	_build_isle()
 
 	var player := Player.new()
 	player.name = "Player"
@@ -199,7 +200,7 @@ func _connect_story() -> void:
 func can_save() -> bool:
 	var p := Game.player
 	return Game.story_start and p != null and p.alive and not p.frozen and not p.knocked_out \
-		and not Game.underwater and _fox != null
+		and not Game.underwater and _fox != null and p.raft == null
 
 
 func save_game() -> bool:
@@ -214,6 +215,7 @@ func save_game() -> bool:
 		"woken": range(_buds.size()).filter(func(i): return _buds[i].awake),
 		"home_step": _home_step,
 		"lake_stage": _lake_stage,
+		"isle_stage": _isle_stage,
 		"food_at_start": _food_at_start,
 		"cooking_hinted": _cooking_hinted,
 		"fox": [_fox._tips_given, _fox._feelings],
@@ -264,6 +266,11 @@ func _resume(player: Player, hud: Hud, data: Dictionary) -> void:
 			_lake.treasure.queue_free()
 	if _home_step >= HOME_STEPS.size() and _lake_stage < 0:
 		get_tree().create_timer(25.0).timeout.connect(_start_lake)
+	_isle_stage = s.get("isle_stage", -1)
+	if _isle and _isle_stage == 1:
+		_isle.page.light_up()
+	if _lake_stage >= 3 and _isle_stage < 0:
+		get_tree().create_timer(30.0).timeout.connect(_start_isle)
 	_food_at_start = s.food_at_start
 	_cooking_hinted = s.cooking_hinted
 	var right := Basis(Vector3.UP, player._yaw) * Vector3.RIGHT
@@ -547,6 +554,7 @@ func _update_story(delta: float) -> void:
 	_update_cooking_hint()
 	_update_map_goal()
 	_update_lake(delta)
+	_update_isle()
 	var dist :=Vector2(p.global_position.x, p.global_position.z).length()
 	if not _sanctum_found:
 		if dist < 22.0 and not Game.quest("hum").is_empty():
@@ -774,6 +782,141 @@ func _on_lake_treasure() -> void:
 		get_tree().create_timer(19.0).timeout.connect(func():
 			_otter.say(["We're keeping it. It's going right on the hearth.", "...Can I hold it first?"]))
 	get_tree().create_timer(14.0).timeout.connect(_autosave)
+	get_tree().create_timer(45.0).timeout.connect(_start_isle)
+
+
+# --- The little house on the water ---------------------------------------------
+# The stone's little house, with its round window, is out on a tiny island in
+# the lake. The Otter wants to build a raft to get there (the Fox is NOT
+# swimming); inside, a page from someone else's dream journal.
+
+var _isle: IsleHouse
+## -1 not yet, 0 building the raft and getting there, 1 at the house, 2 read the page.
+var _isle_stage := -1
+const DRIFTWOOD_NEEDED := 4
+
+
+func _build_isle() -> void:
+	if _lake == null:
+		return
+	var spot := IsleHouse.find_spot(_lake.global_position)
+	if spot.is_empty():
+		push_warning("No island found for the little house")
+		return
+	_isle = IsleHouse.build(self, spot, _stone_mats)
+	_isle.page_read.connect(_on_page_read)
+	_spawn_driftwood()
+	Game.inventory_changed.connect(_update_driftwood_step)
+
+
+## Bleached logs washed up along the shore near the old stones.
+func _spawn_driftwood() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 6262
+	var placed: Array[Vector3] = []
+	var from := _lake.global_position
+	for tries in 600:
+		if placed.size() >= 8:
+			break
+		var a := rng.randf() * TAU
+		var r := rng.randf_range(5.0, 42.0)
+		var p := from + Vector3(cos(a), 0, sin(a)) * r
+		p.y = Game.ground_at(p.x, p.z)
+		if p.y < WATER_LEVEL - 0.05 or p.y > WATER_LEVEL + 0.6 or Vector2(p.x - Game.ISLE.x, p.z - Game.ISLE.y).length() < 12.0:
+			continue
+		if placed.any(func(q): return q.distance_to(p) < 4.0):
+			continue
+		placed.append(p)
+		Gatherable.spawn(self, p, "driftwood", rng)
+
+
+func _driftwood_step() -> String:
+	return "Gather driftwood along the shore  %d/%d" % [mini(Game.inventory.get("Driftwood", 0), DRIFTWOOD_NEEDED), DRIFTWOOD_NEEDED]
+
+
+func _update_driftwood_step() -> void:
+	var q := Game.quest("isle")
+	if q.is_empty() or q.steps[0].done:
+		return
+	Game.set_step("isle", 0, _driftwood_step(), Game.has_items("Driftwood", DRIFTWOOD_NEEDED))
+
+
+func _start_isle() -> void:
+	if _isle_stage >= 0 or _isle == null or _otter == null:
+		return
+	_isle_stage = 0
+	_otter.say(["I keep looking at the little house on the stone...", "Wait. LOOK! Out on the water! There's a little house! With a ROUND window!"])
+	get_tree().create_timer(7.5).timeout.connect(func():
+		_fox.say(["Great. It's on an island.", "Which means swimming. Which means no."]))
+	get_tree().create_timer(14.0).timeout.connect(func():
+		_otter.say(["We could build a RAFT! Driftwood floats, and there's lots along the shore.", "Tie it up with vines, push it out... and the Fox stays dry!"])
+		Game.learn("raft", [], "Otter")
+		Game.start_quest("isle", "The House on the Water", [_driftwood_step(), "Build a raft on the water (Tab → Know-how)",
+			"Paddle out to the little house (E on the raft)"], false, "Otter")
+		_update_driftwood_step())
+
+
+func _on_raft_built() -> void:
+	var q := Game.quest("isle")
+	if q.is_empty():
+		return
+	Game.set_step("isle", 0, "Gather driftwood along the shore", true)
+	Game.set_step("isle", 1, "Build a raft on the water", true)
+	if _fox and _otter:
+		get_tree().create_timer(1.5).timeout.connect(func():
+			_otter.say(["It floats! It FLOATS!", "Everybody on! Captain Otter says GO!"]))
+		get_tree().create_timer(7.0).timeout.connect(func():
+			_fox.say(["I call the front.", "Somebody has to be the lookout. And stay dry."]))
+
+
+func _update_isle() -> void:
+	if _isle == null or _isle_stage != 0 or not Game.known.has("raft"):
+		return
+	var p := Game.player
+	var to := _isle.global_position - p.global_position
+	if Vector2(to.x, to.z).length() > 5.5 or p.raft or p.global_position.y < _isle.floor_y - 0.4:
+		return
+	_isle_stage = 1
+	var q := Game.quest("isle")
+	if not q.is_empty():
+		for i in q.steps.size():
+			if not q.steps[i].done:
+				Game.set_step("isle", i, (q.steps[i].text as String).get_slice(" (", 0).get_slice("  ", 0), true)
+		q.steps.append({"text": "Look inside the little house", "done": false})
+		Game.quests_changed.emit()
+	_isle.page.light_up()
+	Game.notify("Someone lived here once.", Color(0.9, 0.85, 0.7))
+	if _fox and _otter:
+		_otter.say(["It's a REAL house! With a round window, just like on the stone!", "Hello? ...Anybody home?"])
+		get_tree().create_timer(6.0).timeout.connect(func():
+			_fox.say(["Nobody's home.", "There's something on the table, though. Glowing. Naturally."]))
+
+
+func _on_page_read() -> void:
+	_isle_stage = 2
+	Game.complete_quest("isle")
+	Game.ideas.erase("The House on the Water")
+	Game.backpack.append("A journal page (someone else's)")
+	Game.practice("Survival", 3.0)
+	_add_family_step("A clue: a page from someone else's dream journal")
+	_finish_family_step("A clue: a page", "A clue: a page from someone else's dream journal")
+	_hud.think([
+		"A page from a dream journal... but not mine. It says:",
+		"I woke up under a big tree, and everyone was gone.",
+		"All I had was a little marble that hums. I followed it here.",
+		"I built this house so I'd have somewhere to come back to.",
+		"If you're reading this, you're not the first. And you're not alone.",
+		"Keep following the hum. It knows the way home.",
+		"...Someone else. Someone just like me.",
+	], 4.2)
+	if _otter and _fox:
+		get_tree().create_timer(31.0).timeout.connect(func():
+			_otter.say(["Somebody else had a marble too?", "Do you think they found their way home?"]))
+		get_tree().create_timer(38.0).timeout.connect(func():
+			_fox.say(["Only one way to find out.", "...We follow the hum. Obviously."]))
+		get_tree().create_timer(46.0).timeout.connect(func():
+			_otter.say(["And the bed in here is still comfy!", "We could stay over sometimes. A home away from home!"]))
+	get_tree().create_timer(30.0).timeout.connect(_autosave)
 
 
 # --- Waking the stones ---------------------------------------------------------
@@ -859,6 +1002,9 @@ func _suggest_home(step: int) -> void:
 
 
 func _on_built(id: String, at: Vector3) -> void:
+	if id == "raft":
+		_on_raft_built()
+		return
 	if _home_step < 0 or _home_step >= HOME_STEPS.size() or HOME_STEPS[_home_step][0] != id:
 		return
 	if Vector2(at.x, at.z).length() > SANCTUM_REACH:
@@ -1284,7 +1430,7 @@ func _build_grass() -> void:
 		var x := cos(a) * d
 		var z := sin(a) * d
 		var h := Game.ground_at(x, z)
-		if d < 15.0 or h < -0.2 or h > 24.0:
+		if d < 15.0 or h < -0.2 or h > 24.0 or _on_isle(x, z):
 			continue
 		var density := patches.get_noise_2d(x, z) * 0.5 + 0.5
 		var in_forest := 0.0
@@ -1448,7 +1594,7 @@ func _build_forest(center: Vector3) -> void:
 		var d := lerpf(GLADE_RADIUS + 1.5, FOREST_RADIUS, sqrt(_rng.randf()))
 		var p := center + Vector3(cos(a), 0, sin(a)) * d
 		p.y = Game.height_at(p.x, p.z)
-		if p.y < WATER_LEVEL + 0.5 or p.y > 22.0:
+		if p.y < WATER_LEVEL + 0.5 or p.y > 22.0 or _on_isle(p.x, p.z):
 			continue
 		var keep := (clumps.get_noise_2d(p.x, p.z) * 0.5 + 0.62) * _forest_amount(p.x, p.z)
 		if _rng.randf() > keep:
@@ -1573,7 +1719,7 @@ func _place_gatherables(center: Vector3) -> void:
 			var a := _rng.randf() * TAU
 			var p := center + Vector3(cos(a), 0, sin(a)) * _rng.randf_range(10.0 if entry[0] in ["sticks", "stones"] else 24.0, FOREST_RADIUS)
 			p.y = Game.ground_at(p.x, p.z)
-			if p.y < WATER_LEVEL + 0.2 or _forest_amount(p.x, p.z) < 0.3:
+			if p.y < WATER_LEVEL + 0.2 or _forest_amount(p.x, p.z) < 0.3 or _on_isle(p.x, p.z):
 				continue
 			placed += 1
 			Gatherable.spawn(self, p, entry[0], _rng)
@@ -1682,7 +1828,7 @@ func _scatter(mesh: Mesh, center: Vector3, radius: float, count: int, style: Cal
 		var d := sqrt(_rng.randf()) * radius
 		var p := center + Vector3(cos(a), 0, sin(a)) * d
 		var h := Game.ground_at(p.x, p.z)
-		if h < WATER_LEVEL + 0.1 or _forest_amount(p.x, p.z) < 0.1:
+		if h < WATER_LEVEL + 0.1 or _forest_amount(p.x, p.z) < 0.1 or _on_isle(p.x, p.z):
 			continue
 		if _rng.randf() > (clusters.get_noise_2d(p.x, p.z) * 0.5 + 0.55) * smoothstep(radius, radius * 0.6, d):
 			continue
@@ -1706,6 +1852,13 @@ func _scatter(mesh: Mesh, center: Vector3, radius: float, count: int, style: Cal
 
 func _near_wake(p: Vector3, margin: float) -> bool:
 	return Game.story_start and Vector2(p.x - Game.wake_point.x, p.z - Game.wake_point.z).length() < margin
+
+
+## On (or just off) the little island: nothing grows or gets scattered there.
+## It's checked where the island's ground would otherwise pass for dry land,
+## so the rest of the world comes out the same as before the island was raised.
+func _on_isle(x: float, z: float) -> bool:
+	return Vector2(x - Game.ISLE.x, z - Game.ISLE.y).length() < 10.5
 
 
 ## Where the old fire ring sits: in plain sight, a few steps from where he
@@ -1747,7 +1900,7 @@ func _scatter_props() -> void:
 		var d := sqrt(_rng.randf()) * 160.0 + 20.0
 		var p := Vector3(cos(a) * d, 0.0, sin(a) * d)
 		p.y = Game.height_at(p.x, p.z)
-		if p.y < WATER_LEVEL + 0.4 or _near_wake(p, GLADE_RADIUS + 5.0):
+		if p.y < WATER_LEVEL + 0.4 or _near_wake(p, GLADE_RADIUS + 5.0) or _on_isle(p.x, p.z):
 			continue
 		placed += 1
 		var r := _rng.randf()
@@ -2045,6 +2198,9 @@ func _take_screenshot() -> void:
 		return
 	if Game.shot_lake:
 		_test_lake()
+		return
+	if Game.shot_isle:
+		_test_isle()
 		return
 	if Game.shot_home:
 		# Make It Home, start to finish: each piece placed on the Sanctum floor
@@ -2672,6 +2828,120 @@ func _test_lake() -> void:
 	pl._interact()
 	await get_tree().create_timer(3.0).timeout
 	print("found: stage %d, backpack %s, side %s, steps %s, diving %.1f" % [_lake_stage, Game.backpack, Game.quest("lakebed"), Game.quest("family").steps, Game.skills.get("Diving", 0.0)])
+	get_tree().quit()
+
+
+## Test hook (--shot-isle): the little house on the water, start to finish:
+## the Otter's raft idea, driftwood, building the raft on the water, paddling
+## out with the pets aboard, hopping off at the deck and reading the page.
+func _test_isle() -> void:
+	var pl := Game.player
+	pl._end_wake()
+	var base := Game.screenshot_path.get_basename()
+	var shot := func(tag: String):
+		get_viewport().get_texture().get_image().save_png("%s_%s.png" % [base, tag])
+	await get_tree().create_timer(55.0).timeout  # through the opening lines and the fire quest
+	for c in [_fox, _otter]:
+		if c._zzz:
+			c._zzz.queue_free()
+		c.body.rotation.z = 0.0
+		c.follow()
+		c._forage_timer = 999.0
+	print("isle house at %s, floor %.2f, facing ruin at %s" % [_isle.global_position.snapped(Vector3.ONE * 0.1), _isle.floor_y, _lake.global_position.snapped(Vector3.ONE * 0.1)])
+	print("driftwood: %d pieces" % get_tree().get_nodes_in_group("gatherables").filter(func(g): return g.kind == "driftwood").size())
+	Game.start_quest("family", "Finding Home", ["Touch the heartstone", "Find out what happened to your family"])
+	_home_step = HOME_STEPS.size()
+	_lake_stage = 3
+	_lake.treasure.queue_free()
+	# Stand on the shore by the old stones, looking out at the house.
+	var shore := _lake.to_global(Vector3(0, 0, -1.6))
+	pl.global_position = Vector3(shore.x, Game.ground_at(shore.x, shore.z) + 0.3, shore.z)
+	var look := func(at: Vector3, pitch: float):
+		var d := at - pl.global_position
+		pl._yaw = atan2(-d.x, -d.z)
+		pl._pitch = pitch
+	look.call(_isle.global_position, -0.05)
+	for c in [_fox, _otter]:
+		c.body.position = pl.global_position + Vector3(randf_range(-2, 2), 0, randf_range(-2, 2))
+	_start_isle()
+	await get_tree().create_timer(15.0).timeout
+	print("knows raft %s, quest %s" % [Game.known.has("raft"), Game.quest("isle")])
+	shot.call("view")
+	# Gather one driftwood for real, then the rest.
+	var wood: Array = get_tree().get_nodes_in_group("gatherables").filter(func(g): return g.kind == "driftwood")
+	if not wood.is_empty():
+		print("gathered: ", wood[0].gather(Game.rng))
+	Game.add_item("Driftwood", 3)
+	Game.add_item("Vines", 3)
+	await get_tree().process_frame
+	print("steps after wood: %s" % [Game.quest("isle").steps])
+	# Build it on the water, just out from the steps.
+	look.call(_lake.to_global(Vector3(0, 0, -12)), -0.3)
+	pl.begin_placing("raft")
+	await get_tree().create_timer(0.3).timeout
+	print("placer valid %s at %s" % [pl._placer.valid, pl._placer.global_position.snapped(Vector3.ONE * 0.1)])
+	shot.call("place")
+	if not pl._placer.valid:
+		# Try a step further out.
+		pl.global_position = _lake.to_global(Vector3(0, 0, -3.0))
+		pl.global_position.y = Game.ground_at(pl.global_position.x, pl.global_position.z) + 0.3
+		await get_tree().create_timer(0.5).timeout
+		print("placer valid (further out) %s" % pl._placer.valid)
+	pl._build("raft", pl._placer.global_position, pl._placer.rotation.y)
+	pl.cancel_placing()
+	await get_tree().create_timer(2.0).timeout
+	var raft: Raft = get_tree().get_nodes_in_group("rafts")[0]
+	print("raft built at %s, steps %s, driftwood left %d" % [raft.global_position.snapped(Vector3.ONE * 0.1), Game.quest("isle").steps, Game.inventory.get("Driftwood", 0)])
+	for c in [_fox, _otter]:
+		c.body.position = pl.global_position + Vector3(randf_range(-1.5, 1.5), 0, randf_range(-1.5, 1.5))
+		c.body.position.y = Game.ground_at(c.body.position.x, c.body.position.z)
+	pl.focused_usable = raft
+	raft.use(pl)
+	await get_tree().create_timer(1.0).timeout
+	print("aboard %s, fox %s, otter %s" % [pl.raft == raft, Companion.State.keys()[_fox.state], Companion.State.keys()[_otter.state]])
+	shot.call("aboard")
+	# Paddle toward the deck.
+	var landing: Vector3 = get_tree().get_nodes_in_group("landings")[0].global_position
+	Input.action_press("move_forward")
+	var t := 0.0
+	var shots := [6.0, 14.0]
+	while t < 60.0:
+		look.call(landing, -0.25)
+		await get_tree().create_timer(0.25).timeout
+		t += 0.25
+		if not shots.is_empty() and t >= shots[0]:
+			shot.call("paddle_%.0f" % shots.pop_front())
+		if Vector2(raft.global_position.x - landing.x, raft.global_position.z - landing.z).length() < 4.5 or (t > 8.0 and raft._speed < 0.05):
+			break
+	Input.action_release("move_forward")
+	print("after %.1fs: raft at %s, %.1f m from the deck landing, pets on %s" % [t, raft.global_position.snapped(Vector3.ONE * 0.1),
+		Vector2(raft.global_position.x - landing.x, raft.global_position.z - landing.z).length(), _fox.body.position.distance_to(raft.global_position) < 2.0])
+	shot.call("arrive")
+	pl.leave_raft()
+	await get_tree().create_timer(2.0).timeout
+	print("hopped off to %s (floor %.2f), isle stage %d, fox at y %.2f, quest %s" % [pl.global_position.snapped(Vector3.ONE * 0.01), _isle.floor_y, _isle_stage, _fox.body.position.y, Game.quest("isle").steps])
+	pl._yaw = _isle.rotation.y + PI
+	pl._pitch = -0.15
+	await get_tree().create_timer(1.0).timeout
+	shot.call("deck")
+	# Inside, at the table.
+	var table := _isle.page.global_position
+	pl.global_position = _isle.to_global(Vector3(-0.6, _isle.floor_y + 0.1, -0.3))
+	look.call(table, -0.6)
+	pl.zoom = 1.5
+	await get_tree().create_timer(1.5).timeout
+	print("inside: on floor y %.2f, page usable %s, focused %s" % [pl.global_position.y, _isle.page.is_in_group("usables"), pl.focused == _isle.page])
+	shot.call("inside")
+	_isle.page.use(pl)
+	await get_tree().create_timer(3.0).timeout
+	print("read: stage %d, backpack %s, side %s, family %s" % [_isle_stage, Game.backpack, Game.quest("isle"), Game.quest("family").steps])
+	# From out on the water, the round window.
+	pl.global_position = _isle.to_global(Vector3(-2.0, 0, -9.0))
+	pl.global_position.y = WATER_LEVEL - 1.4
+	look.call(_isle.global_position + Vector3.UP * (_isle.floor_y + 1.4), 0.05)
+	pl.zoom = 3.0
+	await get_tree().create_timer(2.0).timeout
+	shot.call("house")
 	get_tree().quit()
 
 

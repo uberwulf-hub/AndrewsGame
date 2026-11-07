@@ -58,7 +58,7 @@ const OTTER_FINDS := [
 const FORAGE_START := [70.0, 110.0]  # first run after waking
 const FORAGE_EVERY := [110.0, 170.0]
 
-enum State { SLEEPING, WAKING, FOLLOWING, FORAGING, RESTING, RESCUING }
+enum State { SLEEPING, WAKING, FOLLOWING, FORAGING, RESTING, RESCUING, RIDING }
 enum Run { GOING, SEARCHING, RETURNING }
 
 var body: Critter
@@ -197,6 +197,9 @@ func _process(delta: float) -> void:
 	_update_wet(delta)
 	if state == State.RESCUING:
 		_update_rescue(delta, player)
+		return
+	if state == State.RIDING:
+		_update_riding(delta)
 		return
 	if state == State.FORAGING:
 		_forage(delta, player)
@@ -632,6 +635,58 @@ func sit_by_fire(fire: Node3D, angle: float) -> void:
 	body.move_to(spot, maxf(Vector2(d.x, d.z).length(), 0.5) / 3.0).tween_callback(func(): body.face(fire.global_position, 0.4))
 
 
+# --- The raft --------------------------------------------------------------------
+# A hop aboard when the hero climbs on, sitting in their spot as it goes (the
+# Fox up front like a figurehead), and a hop off onto the dock or shore after him.
+
+var _raft: Raft
+var _raft_seat := Vector3.ZERO
+var _board_from := Vector3.ZERO
+var _board_t := 1.0
+
+
+func ride(r: Raft, seat: Vector3) -> void:
+	body.halt()
+	_sitting_fire = null
+	_showing = false
+	_shake_timer = -1.0
+	state = State.RIDING
+	_raft = r
+	_raft_seat = seat
+	_board_from = body.position
+	_board_t = 0.0
+	body.moving = false
+
+
+func hop_off(at: Vector3) -> void:
+	_raft = null
+	state = State.FOLLOWING
+	body.position = Vector3(at.x, _floor_height(at.x, at.z), at.z)
+	_hop_v = 2.6  # a little bounce as they land
+	_idle_time = 0.0
+
+
+func _update_riding(delta: float) -> void:
+	if not is_instance_valid(_raft):
+		state = State.FOLLOWING
+		return
+	_set_in_water(false)
+	body.moving = false
+	var seat := _raft.seat(_raft_seat)
+	# A hop over (it can take a moment, from a few steps away), then ride along.
+	_board_t = minf(1.0, _board_t + delta / 0.5)
+	body.position = _board_from.lerp(seat, _board_t) + Vector3.UP * sin(_board_t * PI) * 0.7
+	body.rotation.y = lerp_angle(body.rotation.y, _raft.rotation.y + (0.0 if who == "fox" else 0.4), 0.2)
+
+
+## The ground, or a floor built over it (the little house's deck and boards).
+func _floor_height(x: float, z: float) -> float:
+	var h := Game.ground_at(x, z)
+	for f in get_tree().get_nodes_in_group("floors"):
+		h = maxf(h, f.floor_at(x, z))
+	return h
+
+
 func _update_showing(player: Player) -> void:
 	if _showing and (player.global_position.distance_to(body.position) < 2.6 or Game.known.has("campfire")):
 		_showing = false
@@ -798,7 +853,7 @@ var _dive_left := 0.0
 ## Height the body rides at: the ground (plus any hop), or the water once
 ## it's too deep to stand.
 func _ride_height(delta: float) -> float:
-	var ground := Game.ground_at(body.position.x, body.position.z)
+	var ground := _floor_height(body.position.x, body.position.z)
 	var float_y := Game.WATER_LEVEL - (FOX_FLOAT if who == "fox" else OTTER_FLOAT)
 	var swim := ground < float_y - 0.05
 	_set_in_water(swim)

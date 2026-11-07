@@ -372,6 +372,8 @@ func _process(delta: float) -> void:
 			_prompt.text = "[E] Talk to the %s" % ("Fox" if p.focused_companion.who == "fox" else "Otter")
 		elif not is_instance_valid(g) and is_instance_valid(p.focused_usable) and not p.frozen:
 			_prompt.text = p.focused_usable.use_prompt()
+		elif p.raft and not p.frozen:
+			_prompt.text = "WASD  paddle      Shift  faster      [E] Hop off"
 		elif p.seated:
 			_prompt.text = "[E] The fire     Move to stand up"
 		else:

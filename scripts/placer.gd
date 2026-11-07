@@ -16,6 +16,8 @@ const SIZES := {
 	"chest": {"distance": 1.8, "radius": 0.5, "fire_gap": 1.4, "shelter_gap": 1.0},
 	# Goes up over other things: only its four poles need clear ground.
 	"rain_cover": {"distance": 2.6, "radius": 1.35, "fire_gap": 0.0, "shelter_gap": 2.0, "poles": true},
+	# Pushed out onto the water: needs deep enough water under the whole hull.
+	"raft": {"distance": 3.4, "radius": 1.0, "fire_gap": 0.0, "water": true},
 }
 
 var id := ""
@@ -52,6 +54,8 @@ func _ready() -> void:
 			_ghost = StorageChest.ghost(_blue)
 		"rain_cover":
 			_ghost = RainCover.ghost(_blue)
+		"raft":
+			_ghost = Raft.ghost(_blue)
 	add_child(_ghost)
 	for n in _ghost.find_children("*", "MeshInstance3D", true, false):
 		_parts.append(n)
@@ -60,7 +64,7 @@ func _ready() -> void:
 ## Moves the preview in front of `from`, facing `forward`, and rechecks the spot.
 func follow(from: Vector3, forward: Vector3) -> void:
 	var spot: Vector3 = from + forward * SIZES[id].distance
-	spot.y = _surface(spot.x, spot.z)
+	spot.y = Game.WATER_LEVEL if SIZES[id].get("water", false) else _surface(spot.x, spot.z)
 	global_position = spot
 	rotation.y = atan2(-forward.x, -forward.z)  # open side (local +Z) toward the hero
 	var ok := _fits(spot)
@@ -85,6 +89,8 @@ func _surface(x: float, z: float) -> float:
 func _fits(spot: Vector3) -> bool:
 	var size: Dictionary = SIZES[id]
 	var radius: float = size.radius
+	if size.get("water", false):
+		return _afloat(spot)
 	if spot.y < Game.WATER_LEVEL + 0.15:
 		return false
 	for s in get_tree().get_nodes_in_group("shelters"):
@@ -140,6 +146,20 @@ func _corners(center: Vector3, half: float, yaw := INF) -> Array[Vector3]:
 		for sz in [-1.0, 1.0]:
 			out.append(center + Basis(Vector3.UP, yaw) * Vector3(sx * half, 0, sz * half))
 	return out
+
+
+## Somewhere a raft can float: deep enough under its whole hull, and not on
+## top of another raft.
+func _afloat(spot: Vector3) -> bool:
+	var turn := Basis(Vector3.UP, rotation.y)
+	for c in [Vector3(-0.9, 0, -1.5), Vector3(0.9, 0, -1.5), Vector3(-0.9, 0, 1.5), Vector3(0.9, 0, 1.5), Vector3.ZERO]:
+		var p: Vector3 = spot + turn * c
+		if Game.ground_at(p.x, p.z) > Game.WATER_LEVEL - Raft.SHALLOW:
+			return false
+	for r in get_tree().get_nodes_in_group("rafts"):
+		if (r as Node3D).global_position.distance_to(spot) < 3.5:
+			return false
+	return true
 
 
 static func _ghost_mat(color: Color) -> StandardMaterial3D:

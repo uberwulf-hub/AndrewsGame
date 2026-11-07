@@ -29,7 +29,7 @@ static func find_spot(avoid: Vector3) -> Dictionary:
 			p.y = Game.height_at(p.x, p.z)
 			if p.y < WATER + 0.35 or p.y > WATER + 1.3:
 				continue
-			if Vector2(p.x - avoid.x, p.z - avoid.z).length() < 30.0:
+			if Vector2(p.x - avoid.x, p.z - avoid.z).length() < 30.0 or Vector2(p.x - Game.ISLE.x, p.z - Game.ISLE.y).length() < 16.0:
 				continue
 			var deep := Vector3.ZERO
 			var found := false
