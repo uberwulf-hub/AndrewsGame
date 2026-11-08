@@ -1,12 +1,13 @@
 {
   "name": "Finding Home",
   "category": "Game",
-  "description": "A Whispering Woods Adventure. A third-person adventure through the woods with a fox companion: explore, gather, fight and find your way home. Early prototype.",
+  "description": "A Whispering Woods Adventure. Wake up under a great tree in a dream-world, with a fox and an otter at your side. Explore the woods and the lake, gather what you need, make a home, build a raft, and follow a humming marble toward the way home. Early prototype.",
   "icon": "store/icon.png",
   "assets": { "windows": "FindingHome-windows.zip" },
   "rightsConfirmed": true,
   "credits": [
     { "asset": "Fox model (models/fox)", "author": "PixelMannen (model); tomkranis (rigging and animation); @AsoboStudio and @scurest (glTF conversion)", "license": "CC0 1.0 (model); CC BY 4.0 (rigging, animation, conversion)", "source": "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Fox" },
+    { "asset": "Hero model and animations (models/ranger)", "author": "Kay Lousberg (KayKit Adventurers Character Pack 1.0, \"Rogue (hooded)\")", "license": "CC0 1.0", "source": "https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0" },
     { "asset": "Character animations (models/hero/anims)", "author": "Adobe Mixamo", "license": "Mixamo license (royalty-free use in games)", "source": "https://www.mixamo.com" },
     { "asset": "Character models", "author": "Made for this game from family photos with Meshy, Tencent Hunyuan3D-2.1 and Mixamo", "license": "Meshy output (CC BY 4.0 when made on Meshy's free plan); Tencent Hunyuan3D-2.1 Community License", "source": null },
     { "asset": "Deer and Stag (models/animals)", "author": "Quaternius", "license": "CC0 1.0", "source": "https://poly.pizza" },
