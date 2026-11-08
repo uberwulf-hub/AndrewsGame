@@ -2202,6 +2202,9 @@ func _take_screenshot() -> void:
 	if Game.shot_isle:
 		_test_isle()
 		return
+	if Game.shot_hero:
+		_test_hero()
+		return
 	if Game.shot_home:
 		# Make It Home, start to finish: each piece placed on the Sanctum floor
 		# the way the player would, a nap on the bedroll, the chest used.
@@ -3214,3 +3217,44 @@ func _test_map() -> void:
 	_hud.close_map()
 	await get_tree().create_timer(0.6).timeout
 	print("frozen after close %s, map quest left %s" % [pl.frozen, not Game.quest("map").is_empty()])
+
+
+## The hero model in the world: standing, running, aiming a tool, sitting and
+## swimming, each held for a picture from the usual camera.
+func _test_hero() -> void:
+	var pl := Game.player
+	pl._end_wake()
+	await get_tree().create_timer(2.0).timeout
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	pl.equip(WeaponData.generate(1, rng))
+	pl.global_position = Vector3(30.0, Game.ground_at(30.0, 30.0) + 0.3, 30.0)
+	pl._yaw = 2.4
+	pl._pitch = -0.25
+	await get_tree().create_timer(1.0).timeout
+	print("rig %s, states %d" % [pl._rig.name if pl._rig else "none", pl._rig.states().size() if pl._rig else 0])
+	var base := Game.screenshot_path.get_basename()
+	for state in ["idle", "run", "aim_idle", "sit", "attack"]:
+		pl.set_physics_process(false)
+		pl._legs.rotation.y = pl._yaw
+		pl._torso.rotation.y = pl._yaw
+		pl._rig.rotation.y = pl._yaw
+		pl._rig.current = ""
+		pl._rig.play(state, 1.0, 0.0)
+		await get_tree().create_timer(0.6).timeout
+		get_viewport().get_texture().get_image().save_png("%s_%s.png" % [base, state])
+	# From the side, to see the tool in hand.
+	pl._rig.current = ""
+	pl._rig.play("aim_idle", 1.0, 0.0)
+	pl._yaw += 1.3
+	await get_tree().create_timer(0.6).timeout
+	get_viewport().get_texture().get_image().save_png("%s_side.png" % base)
+	pl.set_physics_process(true)
+	# Swim: out in the lake, moving.
+	pl.global_position = Vector3(-56.0, Game.WATER_LEVEL - 0.6, -45.0)
+	Input.action_press("move_forward")
+	await get_tree().create_timer(2.5).timeout
+	print("swimming %s, rig state %s" % [pl.swimming, pl._rig.current])
+	get_viewport().get_texture().get_image().save_png("%s_swim.png" % base)
+	Input.action_release("move_forward")
+	get_tree().quit()

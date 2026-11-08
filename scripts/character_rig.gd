@@ -14,7 +14,44 @@ const ROOT := "res://models/%s/"
 const LOOPING := ["idle", "sit", "walk", "run", "walk_back", "strafe_left", "strafe_right", "swim", "tread", "fall", "aim_idle", "sprint"]
 const EXTENSIONS := ["fbx", "glb", "gltf", "scn", "tscn"]
 ## Embedded animation names mapped to our state names.
-const EMBEDDED_NAMES := {"survey": "idle"}
+const EMBEDDED_NAMES := {
+	"survey": "idle",
+	# KayKit adventurers (Kay Lousberg, CC0): their built-in animation set.
+	"walking_a": "walk", "running_a": "run", "walking_backwards": "walk_back",
+	"jump_start": "jump", "jump_idle": "fall", "lie_standup": "getting_up",
+	"sit_floor_idle": "sit", "1h_ranged_aiming": "aim_idle",
+	"running_strafe_left": "strafe_left", "running_strafe_right": "strafe_right",
+	"unarmed_melee_attack_punch_a": "punch", "1h_melee_attack_chop": "attack",
+	"hit_a": "hit", "death_a": "death", "pickup": "pick_up", "running_b": "sprint",
+}
+## Props that come in a character's hands (KayKit knives and crossbows); the
+## game gives the hero its own tools, so these are hidden.
+const PROP_MESHES := ["knife", "knife_offhand", "1h_crossbow", "2h_crossbow", "throwable"]
+
+## Our helpers look bones up by Mixamo-style name endings ("leftupleg",
+## "rightforearm"). Other skeletons are translated to those names here.
+const BONE_ALIASES := {
+	"upperarm": "arm", "lowerarm": "forearm", "hand": "hand",
+	"upperleg": "upleg", "lowerleg": "leg", "foot": "foot", "toes": "toebase",
+	"chest": "spine1",
+}
+
+
+static func canonical_bone(bone: String) -> String:
+	var b := bone.to_lower()
+	for side in [[".l", "left"], [".r", "right"], ["_l", "left"], ["_r", "right"]]:
+		if b.ends_with(side[0]):
+			var part := b.trim_suffix(side[0])
+			if BONE_ALIASES.has(part):
+				return side[1] + BONE_ALIASES[part]
+	return BONE_ALIASES.get(b, b)
+
+
+static func find_bone(skel: Skeleton3D, suffix: String) -> int:
+	for i in skel.get_bone_count():
+		if canonical_bone(skel.get_bone_name(i)).ends_with(suffix):
+			return i
+	return -1
 
 ## Emitted when a non-looping state (jump, getting_up, ...) plays to its end.
 signal finished(state: String)
@@ -107,11 +144,14 @@ func _setup(model: Node3D, target_height: float) -> void:
 	_base_y = _model.position.y
 	if soft_sides:
 		_soften_sides()
+	for mi: MeshInstance3D in _model.find_children("*", "MeshInstance3D", true, false):
+		if String(mi.name).to_lower() in PROP_MESHES:
+			mi.visible = false
 	for anim_name in embedded:
 		_add_animation(EMBEDDED_NAMES.get(anim_name, anim_name), embedded[anim_name])
 	if skeleton:
 		for b in skeleton.get_bone_count():
-			var bone := skeleton.get_bone_name(b).to_lower()
+			var bone := canonical_bone(skeleton.get_bone_name(b))
 			if bone.ends_with("toebase") or bone.ends_with("foot"):
 				_feet.append(b)
 
@@ -225,7 +265,7 @@ func _hips_ratio(source: Skeleton3D) -> float:
 
 static func _hips_height(sk: Skeleton3D) -> float:
 	for b in sk.get_bone_count():
-		if sk.get_bone_name(b).to_lower().ends_with("hips"):
+		if canonical_bone(sk.get_bone_name(b)).ends_with("hips"):
 			return sk.get_bone_rest(b).origin.y
 	return 0.0
 
@@ -272,7 +312,7 @@ static func _bounds(node: Node, xform: Transform3D) -> AABB:
 	var here := xform
 	if node is Node3D:
 		here = xform * (node as Node3D).transform
-	if node is MeshInstance3D and (node as MeshInstance3D).mesh:
+	if node is MeshInstance3D and (node as MeshInstance3D).mesh and String(node.name).to_lower() not in PROP_MESHES:
 		box = here * (node as MeshInstance3D).mesh.get_aabb()
 		first = false
 	for child in node.get_children():

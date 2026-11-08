@@ -8,6 +8,9 @@ From the Khronos glTF Sample Assets ("Fox").
 - Rigging and animation by tomkranis, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
 - glTF conversion by @AsoboStudio and @scurest, CC BY 4.0
 
+### The hero (models/ranger/ranger.glb)
+"Rogue (hooded)" from the KayKit Adventurers Character Pack 1.0 by Kay Lousberg (https://www.kaylousberg.com), CC0 1.0, with its built-in animations.
+
 ### Character animations (models/hero/anims)
 Mixamo animations by Adobe, used under the Mixamo license.
 

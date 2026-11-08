@@ -15,7 +15,7 @@ func _process_modification() -> void:
 		return
 	if _bones.is_empty():
 		for i in skel.get_bone_count():
-			var bone := skel.get_bone_name(i).to_lower()
+			var bone := CharacterRig.canonical_bone(skel.get_bone_name(i))
 			if bone.ends_with("spine") or bone.ends_with("spine1") or bone.ends_with("spine2"):
 				_bones.append(i)
 		if _bones.is_empty():

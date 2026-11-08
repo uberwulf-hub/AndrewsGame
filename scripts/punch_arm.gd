@@ -32,10 +32,7 @@ func _process_modification() -> void:
 
 
 func _find(skel: Skeleton3D, suffix: String) -> int:
-	for i in skel.get_bone_count():
-		if skel.get_bone_name(i).to_lower().ends_with(suffix):
-			return i
-	return -1
+	return CharacterRig.find_bone(skel, suffix)
 
 
 ## Turns `bone` so its child points at `goal`, blended by `amount`.

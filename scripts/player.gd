@@ -69,6 +69,9 @@ var _sprinting := false
 var _nearby_loot: Array = []
 
 var _camera_rig: Node3D
+## Height the third-person camera orbits around: shoulder height, or just
+## over the hood for the shorter, big-headed ranger.
+var _shoulder := 1.55
 var _pitch_pivot: Node3D
 var _spring: SpringArm3D
 var _model: Node3D
@@ -217,7 +220,7 @@ func _process(delta: float) -> void:
 	var arm := 0.0 if first_person else (minf(zoom, 1.9) if aiming else zoom)
 	_spring.spring_length = lerpf(_spring.spring_length, arm, smooth)
 	_spring.position.x = lerpf(_spring.position.x, 0.0 if first_person else 0.65, smooth)
-	_camera_rig.position.y = lerpf(_camera_rig.position.y, EYE_HEIGHT if first_person else 1.55, smooth)
+	_camera_rig.position.y = lerpf(_camera_rig.position.y, EYE_HEIGHT if first_person else _shoulder, smooth)
 	if _rig:
 		_rig.visible = not (first_person and _spring.spring_length < 0.3)
 	var target_fov := 55.0 if aiming else (78.0 if _sprinting else 72.0)
@@ -1530,8 +1533,9 @@ func _update_swim_pose(delta: float, wish: Vector3) -> void:
 	_swim_facing = lerp_angle(_swim_facing, target_facing, smooth)
 	var dive := clampf(-velocity.y / SWIM_SPRINT_SPEED, -1.0, 1.0)
 	var target_tilt := -1.25 - dive * 0.3 if moving and not combat_pose else -0.15
-	if _rig:
+	if _rig and _rig.has_state("swim"):
 		target_tilt = -dive * 0.4  # the swim animation already lies the body flat
+	if _rig:
 		_legs.rotation.y = 0.0
 		_torso.rotation.y = 0.0
 		_update_rig(combat_pose)
@@ -1575,7 +1579,7 @@ func _surface() -> String:
 
 func _build_camera() -> void:
 	_camera_rig = Node3D.new()
-	_camera_rig.position = Vector3(0, 1.55, 0)
+	_camera_rig.position = Vector3(0, _shoulder, 0)
 	add_child(_camera_rig)
 	_pitch_pivot = Node3D.new()
 	_camera_rig.add_child(_pitch_pivot)
@@ -1639,8 +1643,16 @@ func _build_model() -> void:
 ## When a rigged hero model has been dropped into models/hero, it replaces the
 ## primitive body: the primitive parts are hidden but their pivots keep driving
 ## the facing (legs) and aim (torso), which the rig follows via a spine twist.
+const RANGER_HEIGHT := 1.8
+## Where the ranger's right hand is when it aims (its 1H_Ranged_Aiming pose).
+const RANGER_HAND := Vector3(0.33, 0.64, -0.36)
+## Camera height for the ranger: a little above the top of the hood.
+const RANGER_SHOULDER := 2.05
+
+
 func _attach_rig() -> void:
-	_rig = CharacterRig.create("hero", 1.93)
+	# The KayKit ranger when it's there, else the photo-made hero.
+	_rig = CharacterRig.create("ranger", RANGER_HEIGHT) if CharacterRig.exists("ranger") else CharacterRig.create("hero", 1.93)
 	if _rig == null:
 		return
 	for part in _legs.get_children() + _torso.get_children():
@@ -1651,10 +1663,15 @@ func _attach_rig() -> void:
 	_rig.skeleton.add_child(_twist)
 	_punch_arm = PunchArm.new()
 	_rig.skeleton.add_child(_punch_arm)
-	_cross_legs = CrossLegs.new()
-	_rig.skeleton.add_child(_cross_legs)
+	if _rig.name == "Rig_hero":  # the ranger's own sit is already cross-legged
+		_cross_legs = CrossLegs.new()
+		_rig.skeleton.add_child(_cross_legs)
 	# Hold the gun in front of the chest, where the aiming pose puts the hands.
-	_gun_socket.position = Vector3(0.12, 1.38, -0.42) - Vector3(0, TORSO_HEIGHT, 0)
+	if _rig.name == "Rig_ranger":
+		_shoulder = RANGER_SHOULDER  # the camera is built after this
+		_gun_socket.position = RANGER_HAND - Vector3(0, TORSO_HEIGHT, 0)
+	else:
+		_gun_socket.position = Vector3(0.12, 1.38, -0.42) - Vector3(0, TORSO_HEIGHT, 0)
 	_rig.play("idle")
 
 
@@ -1667,9 +1684,10 @@ func _update_rig(combat_pose: bool) -> void:
 	if swimming:
 		_twist.yaw = 0.0
 		if horizontal > 0.5 and not combat_pose:
-			_rig.play("swim", clampf(horizontal / SWIM_SPEED, 0.6, 1.6))
-		else:
-			_rig.play("tread")
+			if not _rig.play("swim", clampf(horizontal / SWIM_SPEED, 0.6, 1.6)):
+				_rig.play("sprint", 0.6)  # no swim of its own: lying flat, arms and legs going
+		elif not _rig.play("tread"):
+			_rig.play("fall", 0.6)
 	elif not is_on_floor():
 		_rig.play("jump" if velocity.y > 1.0 else "fall", 1.0, 0.15)
 	elif horizontal > 0.4:
