@@ -102,6 +102,11 @@ const PUNCH_COOLDOWN := 0.5
 const PUNCH_REACH := 1.3
 const PUNCH_DAMAGE := 12.0
 var _punch_time := 0.0  # counts down while a punch is out
+var _punch_count := 0
+var _punch_animated := false  # this punch is the rig's own animation, not PunchArm
+## A one-off rig animation (punch, dodge, shot, hit...) playing over movement.
+var _action_time := 0.0
+var _action_soft := true  # moving off cancels it, so feet never slide
 var _punch_cooldown := 0.0
 var _punch_landed := false
 var _punch_arm: PunchArm
@@ -556,6 +561,7 @@ func _tick_timers(delta: float) -> void:
 	_momentum_timer = maxf(0.0, _momentum_timer - delta)
 	_shot_pose = maxf(0.0, _shot_pose - delta)
 	_punch_cooldown = maxf(0.0, _punch_cooldown - delta)
+	_action_time = maxf(0.0, _action_time - delta)
 	_cant_build_cooldown = maxf(0.0, _cant_build_cooldown - delta)
 	if _punch_time > 0.0:
 		_punch_time = maxf(0.0, _punch_time - delta)
@@ -563,7 +569,7 @@ func _tick_timers(delta: float) -> void:
 		if t > 0.3 and not _punch_landed:
 			_punch_landed = true
 			_punch_land()
-		if _punch_arm:
+		if _punch_arm and not _punch_animated:
 			# Snap out fast, hold a beat, ease back.
 			_punch_arm.amount = smoothstep(0.0, 0.28, t) * (1.0 - smoothstep(0.45, 1.0, t))
 			_punch_arm.target = _chest() + _aim_flat() * PUNCH_REACH
@@ -601,6 +607,8 @@ func _try_fire() -> void:
 	var rate := weapon.fire_rate * (1.3 if momentum_active() else 1.0)
 	_fire_timer = 1.0 / rate
 	_shot_pose = 0.6
+	if _fire_timer >= 0.3:  # a kick of recoil for slower tools; quick ones just hold the aim
+		_act("shoot", minf(_fire_timer, 0.45))
 	var muzzle := _gun_model.to_global(_gun_model.get_meta("muzzle"))
 	for i in weapon.pellets:
 		_fire_ray(muzzle)
@@ -716,6 +724,7 @@ func _nova() -> void:
 	if nova_cooldown > 0.0:
 		return
 	nova_cooldown = NOVA_COOLDOWN
+	_act("cast", 0.7)
 	var color: Color = NOVA_COLOR if weapon.element == WeaponData.Element.KINETIC else WeaponData.ELEMENT_COLORS[weapon.element]
 	var center := global_position + Vector3.UP * 0.6
 	FX.bloom(center, NOVA_RADIUS, color)
@@ -736,6 +745,29 @@ func _nova() -> void:
 			e.knockback(offset.normalized() * 14.0)
 
 
+## Plays one of the rig's one-off animations over whatever the body is doing.
+## Light ones (`soft`) only start while standing more or less still, and stop
+## if you move off; hard ones (dodges, falling over) play through.
+func _act(state: String, duration: float, soft := true) -> bool:
+	if _rig == null or swimming or raft or not is_on_floor():
+		return false
+	if soft and Vector2(velocity.x, velocity.z).length() > 1.2:
+		return false
+	if not _rig.act(state, duration):
+		return false
+	_action_time = duration
+	_action_soft = soft
+	return true
+
+
+## Which way a dodge roll goes, from the dash direction and the way the body faces.
+func _dodge_state(dir: Vector3) -> String:
+	var local := Basis(Vector3.UP, -_legs.rotation.y) * dir
+	if absf(local.x) > absf(local.z):
+		return "dodge_right" if local.x > 0.0 else "dodge_left"
+	return "dodge_forward" if local.z < 0.0 else "dodge_backward"
+
+
 func _dash(wish: Vector3) -> void:
 	if dash_cooldown > 0.0:
 		return
@@ -744,6 +776,7 @@ func _dash(wish: Vector3) -> void:
 	_dash_dir = wish.normalized() if wish.length() > 0.1 else Basis(Vector3.UP, _yaw) * Vector3.FORWARD
 	FX.burst(global_position + Vector3.UP * 0.9, NOVA_COLOR, 14, 4.0)
 	Audio.play("dash")
+	_act(_dodge_state(_dash_dir), 0.5, false)
 
 
 func take_damage(amount: float) -> void:
@@ -755,6 +788,8 @@ func take_damage(amount: float) -> void:
 	if _hurt_sound_cooldown <= 0.0:
 		_hurt_sound_cooldown = 0.25
 		Audio.play("player_hurt")
+		if health > 0.0 and _action_time <= 0.0:
+			_act("hit" if randf() < 0.5 else "hit_b", 0.4)
 	if health <= 0.0:
 		_die()
 
@@ -841,9 +876,16 @@ func _die() -> void:
 	alive = false
 	health = 0.0
 	velocity = Vector3.ZERO
-	_model.visible = false
-	FX.burst(global_position + Vector3.UP, NOVA_COLOR, 40, 7.0)
 	_respawn_timer = 4.0
+	if _rig and not swimming and _rig.act("death", 1.1):
+		# Topple over first, then fade out in the burst of light.
+		get_tree().create_timer(1.4).timeout.connect(func() -> void:
+			if not alive:
+				_model.visible = false
+				FX.burst(global_position + Vector3.UP * 0.4, NOVA_COLOR, 40, 7.0))
+	else:
+		_model.visible = false
+		FX.burst(global_position + Vector3.UP, NOVA_COLOR, 40, 7.0)
 	Audio.play("player_death", null, 0.0, 1.0, 0.0)
 	died.emit()
 
@@ -860,6 +902,10 @@ func _respawn() -> void:
 	knocked_out = false
 	tow = Vector3.ZERO
 	_model.transform = Transform3D.IDENTITY
+	_action_time = 0.0
+	if _rig:
+		_rig.current = ""
+		_rig.play("idle", 1.0, 0.0)
 	_model.visible = true
 	Audio.play("respawn", null, 0.0, 1.0, 0.0)
 	respawned.emit()
@@ -1013,6 +1059,7 @@ func _interact() -> void:
 	if is_instance_valid(focused_gatherable):
 		var got := focused_gatherable.gather(Game.rng)
 		if got != "":
+			_act("pick_up", 0.8)
 			Game.notify(got, Color(0.9, 0.95, 0.8))
 		return
 	if is_instance_valid(focused_loot):
@@ -1353,8 +1400,14 @@ func _punch() -> void:
 	_punch_time = PUNCH_TIME
 	_punch_cooldown = PUNCH_COOLDOWN
 	_punch_landed = false
+	# Standing still, the rig throws its own jab, cross and kick in turn;
+	# on the move, PunchArm swings an arm over the run.
+	_punch_count += 1
+	_punch_animated = _act(["punch", "punch_b", "kick"][_punch_count % 3], PUNCH_TIME + 0.2)
 	if _punch_arm:
 		_punch_arm.left = not _punch_arm.left
+		if _punch_animated:
+			_punch_arm.amount = 0.0
 	Audio.play("dash", null, -14.0, 1.6)
 
 
@@ -1470,6 +1523,7 @@ func _pick_up_focused() -> void:
 		LootDrop.spawn(get_parent(), weapon, spot, false)
 	equip(new_weapon)
 	Audio.play("equip")
+	_act("pick_up", 0.8)
 	Game.notify("In hand: %s" % new_weapon.display_name, new_weapon.color)
 
 
@@ -1681,6 +1735,11 @@ func _update_rig(combat_pose: bool) -> void:
 	_rig.rotation.y = _legs.rotation.y
 	_twist.yaw = angle_difference(_legs.rotation.y, _torso.rotation.y)
 	var horizontal := Vector2(velocity.x, velocity.z).length()
+	if _action_time > 0.0:
+		if swimming or not is_on_floor() or (_action_soft and horizontal > 1.6):
+			_action_time = 0.0  # moved off, jumped or fell in: back to moving
+		else:
+			return
 	if swimming:
 		_twist.yaw = 0.0
 		if horizontal > 0.5 and not combat_pose:

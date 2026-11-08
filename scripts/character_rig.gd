@@ -23,6 +23,8 @@ const EMBEDDED_NAMES := {
 	"running_strafe_left": "strafe_left", "running_strafe_right": "strafe_right",
 	"unarmed_melee_attack_punch_a": "punch", "1h_melee_attack_chop": "attack",
 	"hit_a": "hit", "death_a": "death", "pickup": "pick_up", "running_b": "sprint",
+	"unarmed_melee_attack_punch_b": "punch_b", "unarmed_melee_attack_kick": "kick",
+	"1h_ranged_shoot": "shoot", "spellcast_shoot": "cast",
 }
 ## Props that come in a character's hands (KayKit knives and crossbows); the
 ## game gives the hero its own tools, so these are hidden.
@@ -100,6 +102,19 @@ func states() -> PackedStringArray:
 		for a in anim_player.get_animation_library("rig").get_animation_list():
 			out.append(a)
 	return out
+
+
+## Plays a one-off state from its start, sped up or slowed to last `duration` seconds.
+func act(state: String, duration: float) -> bool:
+	if not has_state(state):
+		return false
+	var length := anim_player.get_animation("rig/" + state).length
+	var again := anim_player.current_animation == "rig/" + state
+	current = ""
+	play(state, length / maxf(duration, 0.05), 0.08)
+	if again:
+		anim_player.seek(0.0, true)  # restart, e.g. a second punch
+	return true
 
 
 ## Crossfades to a state if it exists; returns false otherwise so callers can fall back.

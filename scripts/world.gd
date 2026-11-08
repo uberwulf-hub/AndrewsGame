@@ -3250,6 +3250,42 @@ func _test_hero() -> void:
 	await get_tree().create_timer(0.6).timeout
 	get_viewport().get_texture().get_image().save_png("%s_side.png" % base)
 	pl.set_physics_process(true)
+	# The real moves, as the game triggers them, caught partway through,
+	# out on the open Sanctum floor and seen a little from the side.
+	pl.global_position = Vector3(2.0, Game.ground_at(2.0, 3.0) + 0.3, 3.0)
+	pl._legs.rotation.y = 0.0
+	pl._yaw = 0.9
+	pl.zoom = 4.6
+	var snap := func(label: String, wait: float) -> void:
+		await get_tree().create_timer(wait).timeout
+		print("%s: rig %s, action %.2f" % [label, pl._rig.current, pl._action_time])
+		get_viewport().get_texture().get_image().save_png("%s_%s.png" % [base, label])
+	await get_tree().create_timer(0.8).timeout
+	pl._try_fire()
+	await snap.call("act_shoot", 0.12)
+	pl._nova()
+	await snap.call("act_cast", 0.35)
+	await get_tree().create_timer(0.6).timeout
+	pl._dash(Vector3.ZERO)
+	await snap.call("act_dodge", 0.2)
+	await get_tree().create_timer(0.8).timeout
+	pl._hurt_sound_cooldown = 0.0
+	pl.take_damage(5.0)
+	await snap.call("act_hit", 0.15)
+	await get_tree().create_timer(0.6).timeout
+	var held := pl.weapon
+	pl.weapon = null
+	pl._punch_cooldown = 0.0
+	for i in 3:
+		pl._punch()
+		await snap.call("act_punch_%d" % i, 0.2)
+		await get_tree().create_timer(0.5).timeout
+		pl._punch_cooldown = 0.0
+	pl.equip(held)
+	pl.take_damage(1000.0)
+	await snap.call("act_death", 0.9)
+	await get_tree().create_timer(4.5).timeout
+	print("respawned alive %s, model visible %s, rig %s" % [pl.alive, pl._model.visible, pl._rig.current])
 	# Swim: out in the lake, moving.
 	pl.global_position = Vector3(-56.0, Game.WATER_LEVEL - 0.6, -45.0)
 	Input.action_press("move_forward")
