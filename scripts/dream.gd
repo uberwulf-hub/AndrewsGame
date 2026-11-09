@@ -63,7 +63,10 @@ func _ready() -> void:
 	if _echo != "":
 		_build_environment()
 		_build_ui()
-		_build_home2()
+		if _echo == "run":
+			_build_beach()
+		else:
+			_build_home2()
 		_build_cast()
 		_build_weather()
 		_make_music()
@@ -344,7 +347,53 @@ func _play_echo() -> void:
 			await _echo_aim()
 		"dive":
 			await _echo_dive()
+		"run":
+			await _echo_run()
 	echo_done.emit()
+
+
+## The moonlit beach again, years later, with the Fox and the Otter along: a
+## race down the hard sand to the old ship. The Fox wins (of course), the Otter
+## is right behind, and the two of them arrive last, laughing.
+func _echo_run() -> void:
+	var b := BEACH
+	await _cut(func():
+		_moonlight()
+		_mood("moon", 0.0)
+		_place(_hero, b + Vector3(5.4, 0.1, 18), PI)
+		_place(_mate, b + Vector3(6.6, 0.1, 18.6), PI)
+		_place(_fox, b + Vector3(6.0, 0.1, 17.2), PI)
+		_place(_otter, b + Vector3(7.2, 0.1, 17.6), PI)
+		_hero.raise_arms(0, 0, 0.01)
+		_mate.raise_arms(0, 0, 0.01)
+		_shot(b + Vector3(-1.5, 1.6, 23), b + Vector3(3.0, 2.2, 8), b + Vector3(6.5, 0.8, 15), b + Vector3(12, 2.5, -12), 13.0)
+		_music.play(31.0)
+	)
+	_at(0.6, func(): _say("Last one to the ship...", 2.6))
+	_at(1.2, func():
+		_fox.move_to(b + Vector3(9.4, 0.1, -1.0), 3.4)
+		_otter.move_to(b + Vector3(10.6, 0.1, -0.2), 3.9))
+	_at(1.5, func():
+		_hero.walk_to(b + Vector3(8.4, 0.1, 4), 3.0)
+		_mate.walk_to(b + Vector3(9.6, 0.1, 4.8), 3.0))
+	_at(3.6, _lanterns)
+	_at(4.5, func():
+		_hero.walk_to(b + Vector3(10.2, 0.1, 1.2), 1.6)
+		_mate.walk_to(b + Vector3(11.4, 0.1, 1.9), 1.6))
+	_at(4.7, func():
+		_fox.face(_hero.position)
+		_say("...is a rotten egg!", 2.8))
+	_at(5.2, func(): _otter.face(_hero.position))
+	_at(6.3, func():
+		_hero.face(b + Vector3(12, 3, -8))
+		_mate.face(b + Vector3(12, 3, -8))
+		_hero.raise_arms(0.0, 1.9)
+		_mate.raise_arms(1.9, 0.0))
+	_at(7.4, func(): _fox.shake_off())
+	_at(10.4, func():
+		_fade_to(1.0, 2.6)
+		create_tween().tween_property(_music, "volume_db", -40.0, 2.8))
+	await _wait(13.2)
 
 
 ## The second home's yard on a golden afternoon. Pinecones on an old stump,

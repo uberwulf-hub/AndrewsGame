@@ -39,7 +39,7 @@ const ENEMIES_ENABLED := false  # hostile camps are off while the opening is bui
 const SKILLS := ["Foraging", "Woodcraft", "Firecraft", "Survival", "Swimming"]
 const SKILL_MAX := 50
 ## Skills that come back through Memory Echoes; they show once remembered.
-const REMEMBERED_SKILLS := ["Aim", "Diving"]
+const REMEMBERED_SKILLS := ["Aim", "Diving", "Running"]
 
 ## What each food is worth when eaten, out of 100 hunger.
 const FOODS := {
@@ -347,6 +347,7 @@ var shot_pets_eat := false
 var shot_home := false
 var shot_lake := false
 var shot_isle := false
+var shot_hill := false
 var shot_hero := false
 var shot_bloom := false
 var shot_save_loaded := false
@@ -545,6 +546,9 @@ func _parse_args() -> void:
 				story_start = true
 			"--shot-hero":
 				shot_hero = true
+			"--shot-hill":
+				shot_hill = true
+				story_start = true
 			"--shot-isle":
 				shot_isle = true
 				story_start = true

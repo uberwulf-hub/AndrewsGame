@@ -45,6 +45,7 @@ func _ready() -> void:
 	_place_starter_loot()
 	_build_lake_ruin()
 	_build_isle()
+	_build_hill()
 
 	var player := Player.new()
 	player.name = "Player"
@@ -216,6 +217,7 @@ func save_game() -> bool:
 		"home_step": _home_step,
 		"lake_stage": _lake_stage,
 		"isle_stage": _isle_stage,
+		"hill_stage": _hill_stage,
 		"food_at_start": _food_at_start,
 		"cooking_hinted": _cooking_hinted,
 		"fox": [_fox._tips_given, _fox._feelings],
@@ -271,6 +273,15 @@ func _resume(player: Player, hud: Hud, data: Dictionary) -> void:
 		_isle.page.light_up()
 	if _lake_stage >= 3 and _isle_stage < 0:
 		get_tree().create_timer(30.0).timeout.connect(_start_isle)
+	_hill_stage = s.get("hill_stage", -1)
+	if _hill:
+		if _hill_stage == 2:
+			_hill.page.light_up()
+		elif _hill_stage >= 3:
+			_hill.page.queue_free()
+			_show_far_light()
+	if _isle_stage >= 2 and _hill_stage < 0:
+		get_tree().create_timer(40.0).timeout.connect(_start_hill)
 	_food_at_start = s.food_at_start
 	_cooking_hinted = s.cooking_hinted
 	var right := Basis(Vector3.UP, player._yaw) * Vector3.RIGHT
@@ -555,6 +566,7 @@ func _update_story(delta: float) -> void:
 	_update_map_goal()
 	_update_lake(delta)
 	_update_isle()
+	_update_hill(delta)
 	var dist :=Vector2(p.global_position.x, p.global_position.z).length()
 	if not _sanctum_found:
 		if dist < 22.0 and not Game.quest("hum").is_empty():
@@ -602,6 +614,8 @@ func _update_heartstone() -> void:
 	_set_usable(_crystal, _heartstone_ready())
 	if _lake:
 		_set_usable(_lake.heartstone, _lake_stone_ready())
+	if _hill:
+		_set_usable(_hill.heartstone, _hill_stone_ready())
 
 
 func _set_usable(node: Node, ready: bool) -> void:
@@ -628,7 +642,11 @@ func play_echo(which: String) -> void:
 	var p := Game.player
 	p.frozen = true
 	Audio.play("level_up", null, -10.0, 0.7)
-	var stone: Node3D = _lake.heartstone if which == "dive" else _crystal
+	var stone: Node3D = _crystal
+	if which == "dive":
+		stone = _lake.heartstone
+	elif which == "run":
+		stone = _hill.heartstone
 	var flare := create_tween()
 	flare.tween_property(stone.get_child(1), "omni_range", 16.0, 1.4)
 	flare.tween_property(stone.get_child(1), "omni_range", 7.0, 2.0).set_delay(16.0)
@@ -671,6 +689,8 @@ func _after_echo(_skipped: bool, which: String) -> void:
 				get_tree().create_timer(10.0).timeout.connect(func():
 					_fox.say(["\"Big breath... hold it...\"", "\"...and come back up smiling.\" Okay. I DEFINITELY know that one."]))
 				get_tree().create_timer(20.0).timeout.connect(_lake_dare)
+		"run":
+			_after_run_echo()
 	get_tree().create_timer(12.0).timeout.connect(_autosave)
 
 
@@ -917,6 +937,134 @@ func _on_page_read() -> void:
 		get_tree().create_timer(46.0).timeout.connect(func():
 			_otter.say(["And the bed in here is still comfy!", "We could stay over sometimes. A home away from home!"]))
 	get_tree().create_timer(30.0).timeout.connect(_autosave)
+	get_tree().create_timer(70.0).timeout.connect(_start_hill)
+
+
+# --- The lookout on the hill ---------------------------------------------------
+# After the page, the marble hums once more, uphill this time: the other
+# dreamer's lookout, with a third heartstone (the beach-run echo: Running) and
+# another page, which points out a thin light far off in the mountains.
+
+var _hill: HillLookout
+## -1 not yet, 0 following the hum, 1 at the lookout, 2 remembered (page lit), 3 read it.
+var _hill_stage := -1
+var _hill_hum := 2.0
+var _far_light: Node3D
+
+
+func _build_hill() -> void:
+	var avoid: Array = [Vector3.ZERO]
+	if Game.story_start:
+		avoid.append(Game.wake_point)
+	if _lake:
+		avoid.append(_lake.global_position)
+	var at := HillLookout.find_spot(avoid)
+	if at == Vector3.INF:
+		push_warning("No hilltop found for the lookout")
+		return
+	_hill = HillLookout.build(self, at, _stone_mats)
+	_hill.heartstone.touched.connect(_on_hill_stone_touched)
+	_hill.page.read.connect(_on_hill_page_read)
+
+
+func _start_hill() -> void:
+	if _hill_stage >= 0 or _hill == null or _otter == null:
+		return
+	_hill_stage = 0
+	Audio.play("ui_notify", null, -6.0, 1.9)
+	_fox.say(["Your marble's at it again.", "...It's pointing UPHILL. Of course it is."])
+	get_tree().create_timer(7.0).timeout.connect(func():
+		_otter.say(["Maybe the person who wrote the page went up there!", "Come on, come on! Before it stops humming!"]))
+	_add_family_step("Follow the hum again (it chimes when you face the right way)")
+
+
+func _update_hill(delta: float) -> void:
+	if _hill == null or _hill_stage != 0:
+		return
+	var p := Game.player
+	var to := _hill.heartstone.global_position - p.global_position
+	to.y = 0.0
+	if to.length() < 12.0:
+		_hill_stage = 1
+		Game.notify("A lookout on the hilltop... and another heartstone.", Color(1.0, 0.85, 0.6))
+		_finish_family_step("Follow the hum again", "Follow the hum up the hill")
+		_add_family_step("Touch the heartstone at the lookout (E)")
+		if _otter and _fox:
+			_otter.say(["Somebody had a campfire up here!", "And look, ANOTHER glowy stone!"])
+			get_tree().create_timer(6.0).timeout.connect(func():
+				_fox.say(["Nice view.", "Whoever it was, they liked a good view."]))
+		return
+	_hill_hum -= delta
+	if _hill_hum <= 0.0:
+		_hill_hum = 2.4
+		var look := -p.camera.global_transform.basis.z
+		look.y = 0.0
+		if look.normalized().dot(to.normalized()) > 0.9:
+			Audio.play("ui_notify", null, lerpf(-4.0, -14.0, clampf(to.length() / 120.0, 0.0, 1.0)), 1.9)
+
+
+func _hill_stone_ready() -> bool:
+	return not _echo_playing and _hill_stage == 1 and not _echoes.has("run")
+
+
+func _on_hill_stone_touched() -> void:
+	if _hill_stone_ready():
+		play_echo("run")
+
+
+func _after_run_echo() -> void:
+	Game.skills["Running"] = Game.skills.get("Running", 0.0)
+	Game.notify("A memory comes back to you: Running", Color(1.0, 0.9, 0.6))
+	get_tree().create_timer(2.5).timeout.connect(func():
+		Game.notify("The more you run (Shift), the faster you get.", Color(0.85, 0.85, 0.75)))
+	_finish_family_step("Touch the heartstone at the lookout", "Touch the heartstone at the lookout")
+	_hill_stage = 2
+	if _otter and _fox:
+		get_tree().create_timer(3.5).timeout.connect(func():
+			_otter.say(["The glowy thing again! You were RUNNING in your sleep!", "Your legs were going like this!"]))
+		get_tree().create_timer(10.0).timeout.connect(func():
+			_fox.say(["\"Last one to the ship...\"", "...is a rotten egg. I won. I always won. I'm sure of it."]))
+		get_tree().create_timer(18.0).timeout.connect(func():
+			if _hill_stage != 2:
+				return
+			_hill.page.light_up()
+			_otter.say(["Hey, there's paper stuck in that pile of rocks!", "It's glowing like the page in the little house!"])
+			_add_family_step("Look at the page in the pile of stones"))
+	else:
+		_hill.page.light_up()
+
+
+func _on_hill_page_read() -> void:
+	_hill_stage = 3
+	Game.backpack.append("Another journal page (from the lookout)")
+	Game.practice("Survival", 3.0)
+	_finish_family_step("Look at the page in the pile", "Read the other dreamer's second page")
+	_add_family_step("A clue: a light far off in the mountains")
+	_finish_family_step("A clue: a light", "A clue: a light far off in the mountains")
+	_hud.think([
+		"Another page, in the same handwriting:",
+		"From up here you can see it. A thin light, far off in the mountains.",
+		"My marble hums loudest when I face it.",
+		"I think that's the way home. I'm going to find out.",
+		"...A light in the mountains.",
+	], 4.2)
+	get_tree().create_timer(9.0).timeout.connect(_show_far_light.bind(true))
+	if _otter and _fox:
+		get_tree().create_timer(22.0).timeout.connect(func():
+			_otter.say(["THERE! I see it! Way, way out there!", "Is that where they went?"]))
+		get_tree().create_timer(29.0).timeout.connect(func():
+			_fox.say(["That's a long walk.", "We're gonna need snacks. Lots of snacks."]))
+	get_tree().create_timer(30.0).timeout.connect(_autosave)
+
+
+func _show_far_light(fade := false) -> void:
+	if _far_light or _hill == null:
+		return
+	_far_light = HillLookout.make_far_light(self, _hill.far_light_at())
+	if fade:
+		Audio.play("level_up", null, -14.0, 0.6)
+		_far_light.scale = Vector3(0.02, 0.02, 0.02)
+		create_tween().tween_property(_far_light, "scale", Vector3.ONE, 4.0).set_trans(Tween.TRANS_SINE)
 
 
 # --- Waking the stones ---------------------------------------------------------
@@ -2199,6 +2347,9 @@ func _take_screenshot() -> void:
 	if Game.shot_lake:
 		_test_lake()
 		return
+	if Game.shot_hill:
+		_test_hill()
+		return
 	if Game.shot_isle:
 		_test_isle()
 		return
@@ -3292,5 +3443,89 @@ func _test_hero() -> void:
 	await get_tree().create_timer(2.5).timeout
 	print("swimming %s, rig state %s" % [pl.swimming, pl._rig.current])
 	get_viewport().get_texture().get_image().save_png("%s_swim.png" % base)
+	Input.action_release("move_forward")
+	get_tree().quit()
+
+
+## --shot-hill: after the page in the little house, the hum leads up to the
+## lookout; the heartstone's beach-run echo gives back Running, the cairn's
+## page is read, and the far light rises in the mountains.
+func _test_hill() -> void:
+	var pl := Game.player
+	pl._end_wake()
+	var base := Game.screenshot_path.get_basename()
+	var shot := func(tag: String):
+		get_viewport().get_texture().get_image().save_png("%s_%s.png" % [base, tag])
+	var look := func(at: Vector3, pitch: float):
+		var d := at - pl.global_position
+		pl._yaw = atan2(-d.x, -d.z)
+		pl._pitch = pitch
+	var put := func(at: Vector3):
+		pl.global_position = Vector3(at.x, Game.ground_at(at.x, at.z) + 0.3, at.z)
+		pl.velocity = Vector3.ZERO
+		for c in [_fox, _otter]:
+			c.body.position = pl.global_position + Vector3(randf_range(-2, 2), 0, randf_range(-2, 2))
+			c.body.position.y = Game.ground_at(c.body.position.x, c.body.position.z)
+	await get_tree().create_timer(30.0).timeout
+	for c in [_fox, _otter]:
+		if c._zzz:
+			c._zzz.queue_free()
+		c.body.rotation.z = 0.0
+		c.follow()
+		c._forage_timer = 999.0
+	if _hill == null:
+		print("NO HILL")
+		get_tree().quit()
+		return
+	var top := _hill.heartstone.global_position
+	print("lookout at %s (height %.1f, %.0f m from the Sanctum), far light at %s" % [_hill.global_position.snapped(Vector3.ONE * 0.1), top.y, Vector2(top.x, top.z).length(), _hill.far_light_at().snapped(Vector3.ONE)])
+	Game.start_quest("family", "Finding Home", ["Touch the heartstone", "Find out what happened to your family"])
+	Game.set_step("family", 0, "Touch the heartstone", true)
+	_home_step = HOME_STEPS.size()
+	_lake_stage = 3
+	_isle_stage = 2
+	# Partway there, looking up at the hill.
+	put.call(top - _hill.out * 30.0)
+	look.call(top, 0.05)
+	_start_hill()
+	await get_tree().create_timer(3.0).timeout
+	print("hum: stage %d, steps %s" % [_hill_stage, Game.quest("family").steps])
+	shot.call("approach")
+	# Up at the lookout.
+	put.call(_hill.to_global(Vector3(0.4, 0, 2.6)))
+	look.call(top, -0.25)
+	await get_tree().create_timer(1.5).timeout
+	print("arrived: stage %d, stone usable %s, focused %s, steps %s" % [_hill_stage, _hill.heartstone.is_in_group("usables"), pl.focused == _hill.heartstone, Game.quest("family").steps])
+	shot.call("arrive")
+	_hill.heartstone.use(pl)
+	for t in [5.0, 4.0, 4.0]:
+		await get_tree().create_timer(t).timeout
+		shot.call("echo_%d" % Time.get_ticks_msec())
+	await get_tree().create_timer(10.0).timeout
+	print("after echo: echoes %s, running %s, stage %d, frozen %s" % [_echoes, Game.skills.has("Running"), _hill_stage, pl.frozen])
+	await get_tree().create_timer(18.0).timeout
+	print("page usable %s, steps %s" % [_hill.page.is_in_group("usables"), Game.quest("family").steps])
+	put.call(_hill.to_global(Vector3(-1.0, 0, 1.8)))
+	look.call(_hill.page.global_position, -0.5)
+	await get_tree().create_timer(1.0).timeout
+	shot.call("cairn")
+	_hill.page.use(pl)
+	await get_tree().create_timer(15.0).timeout
+	print("read: stage %d, backpack %s, far light %s, steps %s" % [_hill_stage, Game.backpack, _far_light != null, Game.quest("family").steps])
+	put.call(_hill.to_global(Vector3(2.2, 0, 3.0)))
+	look.call(_hill.far_light_at() + Vector3.UP * 30.0, 0.0)
+	await get_tree().create_timer(2.0).timeout
+	shot.call("far_light")
+	# From back at the Sanctum, can it still be seen?
+	put.call(Vector3(6, 0, 6))
+	look.call(_hill.far_light_at() + Vector3.UP * 40.0, 0.08)
+	await get_tree().create_timer(2.0).timeout
+	shot.call("far_from_home")
+	# Running: a sprint on the flat.
+	Input.action_press("move_forward")
+	Input.action_press("sprint")
+	await get_tree().create_timer(2.0).timeout
+	print("running: speed %.2f (story run %.1f), Running xp %.2f" % [Vector2(pl.velocity.x, pl.velocity.z).length(), Player.STORY_RUN_SPEED, Game.skills.get("Running", 0.0)])
+	Input.action_release("sprint")
 	Input.action_release("move_forward")
 	get_tree().quit()

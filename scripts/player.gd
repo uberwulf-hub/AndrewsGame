@@ -493,6 +493,11 @@ func _physics_process(delta: float) -> void:
 	var speed := AIM_SPEED if aiming else (SPRINT_SPEED if _sprinting else WALK_SPEED)
 	if Game.story_start and not aiming:
 		speed = STORY_RUN_SPEED if _sprinting else STORY_WALK_SPEED
+	if _sprinting and Game.skills.has("Running"):
+		# Remembered on the hill: up to a third faster with practice.
+		speed *= 1.0 + 0.33 * (Game.skill_level("Running") - 1) / (Game.SKILL_MAX - 1.0) + 0.06
+		if is_on_floor() and velocity.length() > 2.0:
+			Game.practice("Running", delta * 0.12)
 	_update_water_state()
 	_update_air(delta)
 	_update_wet(delta)
