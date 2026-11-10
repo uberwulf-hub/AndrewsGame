@@ -348,6 +348,7 @@ var shot_home := false
 var shot_lake := false
 var shot_isle := false
 var shot_hill := false
+var shot_gate := false
 var shot_hero := false
 var shot_bloom := false
 var shot_save_loaded := false
@@ -546,6 +547,9 @@ func _parse_args() -> void:
 				story_start = true
 			"--shot-hero":
 				shot_hero = true
+			"--shot-gate":
+				shot_gate = true
+				story_start = true
 			"--shot-hill":
 				shot_hill = true
 				story_start = true

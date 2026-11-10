@@ -169,11 +169,15 @@ static func make_far_light(parent: Node3D, at: Vector3) -> Node3D:
 	beam.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 	beam.disable_fog = true
 	beam.cull_mode = BaseMaterial3D.CULL_DISABLED
-	var column := MeshKit.part(root, MeshKit.cyl(0.6, 1.4, 140.0, 10), beam, Vector3(0, 70.0, 0))
+	# Fades away up close, so standing in it doesn't white out the screen.
+	beam.distance_fade_mode = BaseMaterial3D.DISTANCE_FADE_PIXEL_ALPHA
+	beam.distance_fade_min_distance = 2.0
+	beam.distance_fade_max_distance = 16.0
+	var column := MeshKit.part(root, MeshKit.cyl(1.3, 0.6, 140.0, 10), beam, Vector3(0, 70.0, 0))
 	column.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var core := MeshKit.glow(Color(1.0, 0.95, 0.8), 6.0)
 	core.disable_fog = true
-	var star := MeshKit.part(root, MeshKit.sphere(2.2, 4.4, 10, 6), core, Vector3(0, 2.0, 0))
+	var star := MeshKit.part(root, MeshKit.sphere(0.55, 1.1, 10, 6), core, Vector3(0, 0.9, 0))
 	star.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var tw := root.create_tween().set_loops()
 	tw.tween_property(column, "scale", Vector3(1.25, 1.0, 1.25), 2.6).set_trans(Tween.TRANS_SINE)

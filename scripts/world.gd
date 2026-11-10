@@ -218,6 +218,7 @@ func save_game() -> bool:
 		"lake_stage": _lake_stage,
 		"isle_stage": _isle_stage,
 		"hill_stage": _hill_stage,
+		"gate_stage": _gate_stage,
 		"food_at_start": _food_at_start,
 		"cooking_hinted": _cooking_hinted,
 		"fox": [_fox._tips_given, _fox._feelings],
@@ -282,6 +283,18 @@ func _resume(player: Player, hud: Hud, data: Dictionary) -> void:
 			_show_far_light()
 	if _isle_stage >= 2 and _hill_stage < 0:
 		get_tree().create_timer(40.0).timeout.connect(_start_hill)
+	_gate_stage = s.get("gate_stage", -1)
+	if _gate:
+		if _gate_stage == 1:
+			_gate.page.light_up()
+		elif _gate_stage >= 2:
+			_gate.page.queue_free()
+		if _gate_stage == 2:
+			_gate.ring_stone.make_ready()
+		elif _gate_stage >= 3:
+			_gate.set_lit(2)
+	if _hill_stage >= 3 and _gate_stage < 0:
+		get_tree().create_timer(40.0).timeout.connect(_start_gate)
 	_food_at_start = s.food_at_start
 	_cooking_hinted = s.cooking_hinted
 	var right := Basis(Vector3.UP, player._yaw) * Vector3.RIGHT
@@ -567,6 +580,7 @@ func _update_story(delta: float) -> void:
 	_update_lake(delta)
 	_update_isle()
 	_update_hill(delta)
+	_update_gate()
 	var dist :=Vector2(p.global_position.x, p.global_position.z).length()
 	if not _sanctum_found:
 		if dist < 22.0 and not Game.quest("hum").is_empty():
@@ -965,6 +979,9 @@ func _build_hill() -> void:
 	_hill = HillLookout.build(self, at, _stone_mats)
 	_hill.heartstone.touched.connect(_on_hill_stone_touched)
 	_hill.page.read.connect(_on_hill_page_read)
+	_gate = FarGate.build(self, _hill.out, _stone_mats)
+	_gate.page.read.connect(_on_gate_page_read)
+	_gate.ring_stone.used.connect(_on_marble_held_up)
 
 
 func _start_hill() -> void:
@@ -1055,16 +1072,106 @@ func _on_hill_page_read() -> void:
 		get_tree().create_timer(29.0).timeout.connect(func():
 			_fox.say(["That's a long walk.", "We're gonna need snacks. Lots of snacks."]))
 	get_tree().create_timer(30.0).timeout.connect(_autosave)
+	get_tree().create_timer(45.0).timeout.connect(_start_gate)
 
 
 func _show_far_light(fade := false) -> void:
 	if _far_light or _hill == null:
 		return
-	_far_light = HillLookout.make_far_light(self, _hill.far_light_at())
+	_far_light = HillLookout.make_far_light(self, _gate.light_at() if _gate else _hill.far_light_at())
 	if fade:
 		Audio.play("level_up", null, -14.0, 0.6)
 		_far_light.scale = Vector3(0.02, 0.02, 0.02)
 		create_tween().tween_property(_far_light, "scale", Vector3.ONE, 4.0).set_trans(Tween.TRANS_SINE)
+
+
+# --- The journey to the light ----------------------------------------------------
+# Across the valley to the mountains, up an old stone stair, to a ledge with a
+# great stone ring. One of its five sockets still holds the other dreamer's
+# marble; their backpack and a last page wait beside it. Holding your marble
+# up wakes a second socket: two of five.
+
+var _gate: FarGate
+## -1 not yet, 0 on the way, 1 on the ledge (page lit), 2 read it, 3 marble held up.
+var _gate_stage := -1
+var _stair_seen := false
+
+
+func _start_gate() -> void:
+	if _gate_stage >= 0 or _gate == null or _otter == null:
+		return
+	_gate_stage = 0
+	_otter.say(["Okay, I packed! I packed... one berry.", "LET'S GO TO THE LIGHT!"])
+	get_tree().create_timer(7.0).timeout.connect(func():
+		_fox.say(["Straight across the valley.", "Try not to walk into the lake this time."]))
+	_add_family_step("Journey to the light in the mountains")
+
+
+func _update_gate() -> void:
+	if _gate == null or _gate_stage != 0:
+		return
+	var p := Game.player.global_position
+	if not _stair_seen and Vector2(p.x - _gate.stair_foot.x, p.z - _gate.stair_foot.z).length() < 12.0:
+		_stair_seen = true
+		Game.notify("Old stone steps, climbing toward the light.", Color(1.0, 0.92, 0.7))
+		if _otter and _fox:
+			_otter.say(["STAIRS! Somebody built stairs up the mountain!", "...That's a LOT of stairs."])
+			get_tree().create_timer(6.0).timeout.connect(func():
+				_fox.say(["Race you to the top.", "Kidding. I'm riding on your head."]))
+	var to := _gate.light_at() - p
+	if Vector2(to.x, to.z).length() < 7.0 and absf(to.y) < 3.0:
+		_gate_stage = 1
+		_gate.page.light_up()
+		_finish_family_step("Journey to the light", "Journey to the light in the mountains")
+		_add_family_step("Look around the stone ring")
+		Game.notify("A great stone ring... and the light pours up in front of it.", Color(1.0, 0.92, 0.7))
+		Audio.play("level_up", null, -12.0, 0.7)
+		if _otter and _fox:
+			_otter.say(["Whoa...", "One of the little holes in the ring is glowing. Like a marble!"])
+			get_tree().create_timer(7.0).timeout.connect(func():
+				_fox.say(["There's a backpack.", "...And a page. You know the drill."]))
+
+
+func _on_gate_page_read() -> void:
+	_gate_stage = 2
+	Game.backpack.append("The last journal page (from the ring)")
+	Game.practice("Survival", 3.0)
+	_finish_family_step("Look around the stone ring", "Read the other dreamer's last page")
+	_hud.think([
+		"The last page, in the same handwriting:",
+		"It's a door. I can feel home on the other side of it.",
+		"But one marble isn't enough to open it. It needs five songs.",
+		"I'm leaving mine here, so it can keep singing while I look for the others.",
+		"Whoever you are: two is a start.",
+		"...Two is a start.",
+	], 4.2)
+	get_tree().create_timer(26.0).timeout.connect(func():
+		_gate.ring_stone.make_ready()
+		_add_family_step("Hold your marble up to the ring (E)")
+		if _otter:
+			_otter.say(["Your marble's humming SO loud right now.", "I think it wants to say hi to the other one!"]))
+
+
+func _on_marble_held_up() -> void:
+	_gate_stage = 3
+	Game.player.frozen = true
+	Audio.play("level_up", null, -6.0, 0.8)
+	create_tween().tween_property(Audio, "dim", 0.3, 1.0)
+	get_tree().create_timer(1.5).timeout.connect(func():
+		_gate.set_lit(2, true)
+		Game.notify("Your marble's hum joins theirs. Two of the five sockets glow.", Color(1.0, 0.9, 0.6)))
+	get_tree().create_timer(4.0).timeout.connect(func():
+		Game.player.frozen = false
+		create_tween().tween_property(Audio, "dim", 1.0, 3.0)
+		_finish_family_step("Hold your marble up", "Hold your marble up to the ring")
+		_add_family_step("A clue: the ring needs five marbles (2 of 5)")
+		_finish_family_step("A clue: the ring", "A clue: the ring needs five marbles (2 of 5)"))
+	if _otter and _fox:
+		get_tree().create_timer(6.0).timeout.connect(func():
+			_otter.say(["They're singing TOGETHER!", "Two is a start! That's what the page said!"]))
+		get_tree().create_timer(13.0).timeout.connect(func():
+			_fox.say(["Three more marbles. Somewhere out there.", "...I'm going to need SO many snacks."]))
+	get_tree().create_timer(20.0).timeout.connect(_autosave)
 
 
 # --- Waking the stones ---------------------------------------------------------
@@ -2347,6 +2454,9 @@ func _take_screenshot() -> void:
 	if Game.shot_lake:
 		_test_lake()
 		return
+	if Game.shot_gate:
+		_test_gate()
+		return
 	if Game.shot_hill:
 		_test_hill()
 		return
@@ -3528,4 +3638,95 @@ func _test_hill() -> void:
 	print("running: speed %.2f (story run %.1f), Running xp %.2f" % [Vector2(pl.velocity.x, pl.velocity.z).length(), Player.STORY_RUN_SPEED, Game.skills.get("Running", 0.0)])
 	Input.action_release("sprint")
 	Input.action_release("move_forward")
+	get_tree().quit()
+
+
+## --shot-gate: from the foot of the old stair, walk up it for real to the
+## ledge, read the last page and hold the marble up to the ring.
+func _test_gate() -> void:
+	var pl := Game.player
+	pl._end_wake()
+	var base := Game.screenshot_path.get_basename()
+	var shot := func(tag: String):
+		get_viewport().get_texture().get_image().save_png("%s_%s.png" % [base, tag])
+	var look := func(at: Vector3, pitch: float):
+		var d := at - pl.global_position
+		pl._yaw = atan2(-d.x, -d.z)
+		pl._pitch = pitch
+	var put := func(at: Vector3):
+		pl.global_position = Vector3(at.x, Game.ground_at(at.x, at.z) + 0.3, at.z)
+		pl.velocity = Vector3.ZERO
+		for c in [_fox, _otter]:
+			c.body.position = pl.global_position + Vector3(randf_range(-2, 2), 0, randf_range(-2, 2))
+			c.body.position.y = Game.ground_at(c.body.position.x, c.body.position.z)
+	await get_tree().create_timer(30.0).timeout
+	for c in [_fox, _otter]:
+		if c._zzz:
+			c._zzz.queue_free()
+		c.body.rotation.z = 0.0
+		c.follow()
+		c._forage_timer = 999.0
+	print("gate at %s, stair foot %s (%.0f m from the Sanctum), ledge %.1f m above it" % [_gate.global_position.snapped(Vector3.ONE * 0.1), _gate.stair_foot.snapped(Vector3.ONE * 0.1),
+		Vector2(_gate.stair_foot.x, _gate.stair_foot.z).length(), _gate.global_position.y - _gate.stair_foot.y])
+	Game.start_quest("family", "Finding Home", ["Touch the heartstone", "Find out what happened to your family"])
+	Game.set_step("family", 0, "Touch the heartstone", true)
+	_home_step = HOME_STEPS.size()
+	_lake_stage = 3
+	_isle_stage = 2
+	_hill_stage = 3
+	_hill.page.queue_free()
+	_show_far_light()
+	_start_gate()
+	# From the hill, looking across at the light.
+	put.call(_hill.global_position + _hill.out * 3.0)
+	look.call(_gate.light_at() + Vector3.UP * 20.0, 0.05)
+	await get_tree().create_timer(2.0).timeout
+	shot.call("from_hill")
+	# At the foot of the stair, then up it on foot.
+	var up := (_gate.light_at() - _gate.stair_foot)
+	put.call(_gate.stair_foot - Vector3(up.x, 0, up.z).normalized() * 4.0)
+	look.call(_gate.light_at() + Vector3.UP * 3.0, 0.1)
+	await get_tree().create_timer(1.5).timeout
+	print("foot: stair seen %s" % _stair_seen)
+	shot.call("stair_foot")
+	Input.action_press("move_forward")
+	Input.action_press("sprint")
+	var t := 0.0
+	var best := 999.0
+	while t < 40.0 and _gate_stage == 0:
+		look.call(_gate.light_at(), 0.0)
+		await get_tree().create_timer(0.25).timeout
+		t += 0.25
+		best = minf(best, pl.global_position.distance_to(_gate.light_at()))
+		if is_equal_approx(fmod(t, 5.0), 0.0):
+			print("  %.0fs at %s, %.1f m to go, on floor %s" % [t, pl.global_position.snapped(Vector3.ONE * 0.1), pl.global_position.distance_to(_gate.light_at()), pl.is_on_floor()])
+		if t == 6.0:
+			shot.call("climbing")
+	Input.action_release("sprint")
+	Input.action_release("move_forward")
+	print("climb: %.1fs, stage %d, closest %.1f m, steps %s" % [t, _gate_stage, best, Game.quest("family").steps])
+	if _gate_stage == 0:
+		print("DIDN'T MAKE IT UP; placing on the ledge")
+		pl.global_position = _gate.to_global(Vector3(0, 0.3, 3.2))
+		await get_tree().create_timer(1.0).timeout
+	await get_tree().create_timer(2.0).timeout
+	pl.global_position = _gate.to_global(Vector3(0.6, 0.3, 3.6))
+	look.call(_gate.ring_center(), 0.1)
+	pl.zoom = 3.5
+	await get_tree().create_timer(1.5).timeout
+	shot.call("ring")
+	_gate.page.use(pl)
+	await get_tree().create_timer(28.0).timeout
+	print("read: stage %d, ring ready %s, steps %s" % [_gate_stage, _gate.ring_stone.is_in_group("usables"), Game.quest("family").steps])
+	_gate.ring_stone.use(pl)
+	await get_tree().create_timer(7.0).timeout
+	print("held up: stage %d, lit %d, frozen %s, steps %s" % [_gate_stage, _gate.lit(), pl.frozen, Game.quest("family").steps])
+	look.call(_gate.ring_center(), 0.1)
+	await get_tree().create_timer(1.0).timeout
+	shot.call("two_of_five")
+	# Looking back down over the valley from the ledge.
+	pl._yaw += PI
+	pl._pitch = -0.15
+	await get_tree().create_timer(1.0).timeout
+	shot.call("view_back")
 	get_tree().quit()
