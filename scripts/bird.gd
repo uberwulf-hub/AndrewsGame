@@ -6,7 +6,7 @@ extends Node3D
 ## owls at night) wheel in wide lazy circles, calling now and then, then drift
 ## off. Faces -Z like everything else.
 
-enum Mode { FLYING, GROUND, SOARING, LEAVING }
+enum Mode { FLYING, GROUND, SOARING, LEAVING, FALLING }
 
 ## Look: [back, belly, wings, beak, size, call pitch]
 const KINDS := {
@@ -58,6 +58,7 @@ static func create(bird_kind: String) -> Bird:
 	b._t = randf() * 10.0
 	b._call_timer = randf_range(2.0, 8.0)
 	b._build(look)
+	b.add_to_group("birds")
 	return b
 
 
@@ -104,10 +105,46 @@ func _process(delta: float) -> void:
 			_on_ground(delta)
 		Mode.SOARING:
 			_soar(delta)
+		Mode.FALLING:
+			_fall(delta)
+			return
 	_animate(delta)
 	_call_timer -= delta
 	if _call_timer <= 0.0:
 		_call()
+
+
+## Hit by a sling stone: a puff of feathers, then it tumbles to the ground
+## and leaves something to gather (feathers, meat and bones).
+func shot_down(from: Vector3) -> void:
+	if mode == Mode.FALLING:
+		return
+	mode = Mode.FALLING
+	var push := global_position - from
+	push.y = 0.0
+	velocity = push.normalized() * 1.5 + Vector3.UP * 1.2
+	FX.burst(global_position + Vector3.UP * 0.08, (KINDS[kind][0] as Color).lightened(0.2), 14, 2.0, 0.035)
+	Audio.play("wing_flap", global_position, 0.0, 1.4, 0.0, 30.0)
+	remove_from_group("birds")
+
+
+func _fall(delta: float) -> void:
+	velocity.y -= 12.0 * delta
+	global_position += velocity * delta
+	rotation.z += 9.0 * delta
+	var ground := maxf(Game.ground_at(global_position.x, global_position.z), Game.WATER_LEVEL)
+	if global_position.y <= ground:
+		var rng := RandomNumberGenerator.new()
+		rng.randomize()
+		var g := Gatherable.new()
+		g.kind = "bird"
+		g.set_meta("color", KINDS[kind][0])
+		g.set_meta("size", KINDS[kind][4])
+		g.position = Vector3(global_position.x, ground, global_position.z)
+		g.rotation.y = rng.randf() * TAU
+		get_parent().get_parent().add_child(g)
+		g._build(rng)
+		queue_free()
 
 
 func _fly(delta: float) -> void:

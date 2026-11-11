@@ -270,7 +270,9 @@ func _resume(player: Player, hud: Hud, data: Dictionary) -> void:
 	if _home_step >= HOME_STEPS.size() and _lake_stage < 0:
 		get_tree().create_timer(25.0).timeout.connect(_start_lake)
 	_isle_stage = s.get("isle_stage", -1)
-	if _isle and _isle_stage == 1:
+	if _isle and _isle_stage >= 2:
+		_isle.page.mark_read()
+	elif _isle and _isle_stage == 1:
 		_isle.page.light_up()
 	if _lake_stage >= 3 and _isle_stage < 0:
 		get_tree().create_timer(30.0).timeout.connect(_start_isle)
@@ -1021,7 +1023,7 @@ func _update_hill(delta: float) -> void:
 
 
 func _hill_stone_ready() -> bool:
-	return not _echo_playing and _hill_stage == 1 and not _echoes.has("run")
+	return not _echo_playing and _hill_stage >= 1 and not _echoes.has("run")
 
 
 func _on_hill_stone_touched() -> void:
@@ -1035,7 +1037,7 @@ func _after_run_echo() -> void:
 	get_tree().create_timer(2.5).timeout.connect(func():
 		Game.notify("The more you run (Shift), the faster you get.", Color(0.85, 0.85, 0.75)))
 	_finish_family_step("Touch the heartstone at the lookout", "Touch the heartstone at the lookout")
-	_hill_stage = 2
+	_hill_stage = maxi(_hill_stage, 2)
 	if _otter and _fox:
 		get_tree().create_timer(3.5).timeout.connect(func():
 			_otter.say(["The glowy thing again! You were RUNNING in your sleep!", "Your legs were going like this!"]))
@@ -1053,6 +1055,7 @@ func _after_run_echo() -> void:
 
 func _on_hill_page_read() -> void:
 	_hill_stage = 3
+	_finish_family_step("Follow the hum again", "Follow the hum up the hill")
 	Game.backpack.append("Another journal page (from the lookout)")
 	Game.practice("Survival", 3.0)
 	_finish_family_step("Look at the page in the pile", "Read the other dreamer's second page")
@@ -1134,6 +1137,7 @@ func _update_gate() -> void:
 
 func _on_gate_page_read() -> void:
 	_gate_stage = 2
+	_finish_family_step("Journey to the light", "Journey to the light in the mountains")
 	Game.backpack.append("The last journal page (from the ring)")
 	Game.practice("Survival", 3.0)
 	_finish_family_step("Look around the stone ring", "Read the other dreamer's last page")
@@ -2454,6 +2458,9 @@ func _take_screenshot() -> void:
 	if Game.shot_lake:
 		_test_lake()
 		return
+	if Game.shot_sling:
+		_test_sling()
+		return
 	if Game.shot_gate:
 		_test_gate()
 		return
@@ -3279,6 +3286,9 @@ func _test_birds() -> void:
 	var grounded := _birds.get_children().filter(func(b): return b.mode == Bird.Mode.GROUND).size()
 	print("birds %d, on the ground %d" % [_birds.get_child_count(), grounded])
 	Bird.fearless = true
+	pl.global_position = Vector3(13.0, Game.ground_at(13.0, 0.0) + 0.3, 0.0)
+	pl._yaw = -PI / 2.0  # looking out, away from the Sanctum
+	await get_tree().create_timer(0.6).timeout
 	var perched: Array = _birds.get_children().filter(func(b): return b.mode == Bird.Mode.GROUND)
 	if not perched.is_empty():
 		var bird: Node3D = perched[0]
@@ -3729,4 +3739,143 @@ func _test_gate() -> void:
 	pl._pitch = -0.15
 	await get_tree().create_timer(1.0).timeout
 	shot.call("view_back")
+	get_tree().quit()
+
+
+## --shot-sling: the sling in hand. Its fork in the left hand at rest and on
+## the move, the band drawn back by the right hand while aiming, and snapping
+## forward when it fires; then the wand, in the right hand.
+func _test_sling() -> void:
+	var pl := Game.player
+	pl._end_wake()
+	await get_tree().create_timer(2.0).timeout
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	pl.equip(WeaponData.generate(1, rng, 0.0, "Hand Cannon"))
+	pl.global_position = Vector3(2.0, Game.ground_at(2.0, 3.0) + 0.3, 3.0)
+	pl._legs.rotation.y = 0.0
+	pl.zoom = 2.6
+	# Walk at the Sanctum's inner step (0.35 m) and up onto it.
+	pl.global_position = Vector3(0.0, Game.ground_at(0.0, 9.0) + 0.9, 9.0)
+	pl._yaw = 0.0
+	await get_tree().create_timer(0.8).timeout
+	var y0 := pl.global_position.y
+	Input.action_press("move_forward")
+	await get_tree().create_timer(1.6).timeout
+	Input.action_release("move_forward")
+	print("step: from y %.2f at z 9 to y %.2f at z %.1f (inner floor top 1.05)" % [y0, pl.global_position.y, pl.global_position.z])
+	pl.global_position = Vector3(2.0, Game.ground_at(2.0, 3.0) + 0.3, 3.0)
+	var base := Game.screenshot_path.get_basename()
+	var viewer := Camera3D.new()
+	viewer.fov = 40.0
+	add_child(viewer)
+	var snap := func(label: String) -> void:
+		var g := pl._grip()
+		print("%s: rig %s, grip %s, tool at hand %.3f m, band drawn to right hand %s" % [label, pl._rig.current, g.bone_name if g else "none",
+			pl._gun_socket.global_position.distance_to(g.global_position) if g else -1.0,
+			(pl._band[2].global_position.distance_to(pl._grip_r.global_position) < 0.02) if not pl._band.is_empty() else false])
+		var facing: float = pl._rig.global_rotation.y
+		var fwd := Vector3(-sin(facing), 0, -cos(facing))
+		var right := Vector3(-fwd.z, 0, fwd.x)
+		for view in [["front", fwd * 2.0 - right * 0.9 + Vector3.UP * 1.2], ["side", right * 2.4 + fwd * 0.3 + Vector3.UP * 1.3]]:
+			viewer.global_position = pl.global_position + view[1]
+			viewer.look_at(pl.global_position + Vector3.UP * 0.95)
+			viewer.make_current()
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png("%s_%s_%s.png" % [base, label, view[0]])
+		pl.camera.make_current()
+	pl._yaw = 0.9
+	await get_tree().create_timer(1.0).timeout
+	await snap.call("idle")
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	var qualities := []
+	pl.sling_released.connect(func(q): qualities.append(q))
+	# Three draws: let go early, in the sweet spot, and hold until his arm gives.
+	var draw := func(hold: float, label: String) -> void:
+		while pl._fire_timer > 0.0 or pl.is_reloading():
+			await get_tree().process_frame
+		Input.action_press("fire")
+		await get_tree().create_timer(hold * 0.5).timeout
+		if label != "":
+			await snap.call(label)
+		await get_tree().create_timer(hold * 0.5).timeout
+		Input.action_release("fire")
+		await get_tree().create_timer(0.15).timeout
+	await draw.call(0.35, "pull_half")
+	await draw.call(0.8, "pull_full")
+	await draw.call(2.6, "pull_tired")
+	print("draws: %s (sweet window %.2fs)" % [qualities, pl.sweet_window()])
+	# A sparrow on the ground 14 m off, shot with a perfect draw.
+	Bird.fearless = true
+	pl.global_position = Vector3(13.0, Game.ground_at(13.0, 0.0) + 0.3, 0.0)
+	pl._yaw = -PI / 2.0  # looking out, away from the Sanctum
+	await get_tree().create_timer(0.6).timeout
+	var spot := pl.global_position + Vector3(-sin(pl._yaw), 0, -cos(pl._yaw)) * 14.0
+	spot.y = Game.ground_at(spot.x, spot.z)
+	var bird := Bird.create("robin")
+	_birds.add_child(bird)
+	bird.global_position = spot
+	bird.mode = Bird.Mode.GROUND
+	bird._timer = 999.0
+	await get_tree().create_timer(0.5).timeout
+	var at := bird.global_position + Vector3.UP * 0.08 - pl.camera.global_position
+	pl._yaw = atan2(-at.x, -at.z)
+	pl._pitch = atan2(at.y, Vector2(at.x, at.z).length())
+	await get_tree().create_timer(0.4).timeout
+	at = bird.global_position + Vector3.UP * 0.08 - pl.camera.global_position
+	pl._pitch = atan2(at.y, Vector2(at.x, at.z).length())
+	await draw.call(0.8, "")
+	await get_tree().create_timer(0.2).timeout
+	get_viewport().get_texture().get_image().save_png("%s_bird_hit.png" % base)
+	print("shot: %s, bird still there %s, mode %s, from %.1f m, cam %s, bird %s" % [qualities[-1], is_instance_valid(bird), Bird.Mode.keys()[bird.mode] if is_instance_valid(bird) else "-", pl.camera.global_position.distance_to(spot), pl.camera.global_position.snapped(Vector3.ONE * 0.1), spot.snapped(Vector3.ONE * 0.1)])
+	await get_tree().create_timer(1.5).timeout
+	var drops := get_tree().get_nodes_in_group("gatherables").filter(func(g): return g.kind == "bird")
+	print("bird drops: %d" % drops.size())
+	if not drops.is_empty():
+		pl.global_position = drops[0].global_position + Vector3(0, 0.3, 1.6)
+		viewer.global_position = drops[0].global_position + Vector3(0.9, 0.9, 0.9)
+		viewer.look_at(drops[0].global_position)
+		viewer.make_current()
+		await get_tree().create_timer(0.3).timeout
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png("%s_bird_drop.png" % base)
+		pl.camera.make_current()
+		print("gathered: %s" % drops[0].gather(Game.rng))
+		print("backpack: feathers %d, meat %d, bones %d" % [Game.inventory.get("Feathers", 0), Game.inventory.get("Bird meat", 0), Game.inventory.get("Small bones", 0)])
+	Input.action_release("aim")
+	pl.equip(WeaponData.generate(1, rng, 0.0, "Rifle"))
+	await get_tree().create_timer(0.8).timeout
+	await snap.call("wand_idle")
+	# The Otter brought a fish; walk off and leave it, and he eats it himself.
+	for c in [_fox, _otter]:
+		if c._zzz:
+			c._zzz.queue_free()
+		c.body.rotation.z = 0.0
+		c.follow()
+		c._forage_timer = 999.0
+	var fish_at := pl.global_position + Vector3(1.0, 0, 0)
+	fish_at.y = Game.ground_at(fish_at.x, fish_at.z)
+	_otter._gift = Gatherable.spawn(self, fish_at, "fish", rng)
+	_otter.hunger = 90.0
+	pl.global_position = fish_at + Vector3(0, 0.3, 22.0)
+	var gift: Gatherable = _otter._gift
+	var waited := 0.0
+	while waited < 20.0 and is_instance_valid(gift):
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	print("left-behind fish eaten %s after %.1fs" % [not is_instance_valid(gift), waited])
+	# The Otter resting on dry land: on his side now, not belly-up.
+
+	pl.global_position = Vector3(3.0, 1.4, 2.0)
+	_otter.body.position = Vector3(4.5, 0, 2.0)
+	_otter.body.position.y = Game.ground_at(_otter.body.position.x, _otter.body.position.z)
+	_otter._wander_point = _otter.body.position
+	_otter._wander_timer = 999.0
+	await get_tree().create_timer(2.5).timeout
+	viewer.global_position = _otter.body.global_position + Vector3(1.2, 0.8, 1.2)
+	viewer.look_at(_otter.body.global_position + Vector3.UP * 0.2)
+	viewer.make_current()
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("%s_otter_rest.png" % base)
+	print("otter resting: swimming %s, roll %.2f (on his side ~1.35, on his back ~3.14)" % [_otter.body.swimming, _otter.body._body.rotation.z])
 	get_tree().quit()

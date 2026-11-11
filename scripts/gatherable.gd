@@ -23,6 +23,9 @@ const KINDS := {
 	"fish": {"item": "Fish", "count": [1, 1], "skill": "Foraging", "verb": "Take the fish"},
 	"crayfish": {"item": "Crayfish", "count": [2, 3], "skill": "Foraging", "verb": "Take the crayfish"},
 	"clams": {"item": "Clams", "count": [2, 4], "skill": "Foraging", "verb": "Take the clams"},
+	# A bird brought down with the sling: feathers, and a little meat and bone.
+	"bird": {"item": "Feathers", "count": [2, 4], "skill": "Survival", "verb": "Gather feathers, meat and bones",
+		"extra": [["Bird meat", 1, 1], ["Small bones", 1, 2]]},
 	# Not picked up: looking at it teaches something.
 	"fire_ring": {"verb": "Look at the old fire ring", "teaches": "campfire", "skill": "Survival",
 		"thought": ["Someone made a fire here, a long time ago...", "Sticks in the middle, stones in a ring around them. I could do that."]},
@@ -69,6 +72,11 @@ func gather(rng: RandomNumberGenerator) -> String:
 	var bonus := 1 if rng.randf() < Game.skill_level(info.skill) * 0.02 else 0
 	var count: int = rng.randi_range(info.count[0], info.count[1]) + bonus
 	Game.add_item(info.item, count)
+	var got := "+%d %s" % [count, info.item]
+	for extra in info.get("extra", []):
+		var n: int = rng.randi_range(extra[1], extra[2])
+		Game.add_item(extra[0], n)
+		got += ", +%d %s" % [n, extra[0]]
 	if info.has("sparks"):
 		Game.spark(info.sparks, info.spark_thought)
 	if Game.FOODS.has(info.item):
@@ -83,7 +91,7 @@ func gather(rng: RandomNumberGenerator) -> String:
 			_berries.visible = true)
 	else:
 		queue_free()
-	return "+%d %s" % [count, info.item]
+	return got
 
 
 ## Lit up while the player is close enough to pick it up.
@@ -117,6 +125,18 @@ func _build(rng: RandomNumberGenerator) -> void:
 				var twig := MeshKit.part(_visual, MeshKit.cyl(0.025, 0.05, rng.randf_range(0.35, 0.6), 5), bleached,
 					Vector3(0.12 * (1 if k == 0 else -1), 0.2, z))
 				twig.rotation = Vector3(rng.randf_range(-0.6, 0.6), 0, (0.9 if k == 0 else -0.9))
+		"bird":
+			# Lying on its side, wings folded, with a few loose feathers about.
+			var color: Color = get_meta("color", Color(0.5, 0.38, 0.26))
+			var s: float = float(get_meta("size", 1.0)) * 1.5
+			var body := MeshKit.part(_visual, MeshKit.sphere(0.05 * s, 0.09 * s, 8, 5), _readable(color), Vector3(0, 0.04 * s, 0), Vector3(0, 0, PI / 2))
+			body.scale = Vector3(1, 1, 1.5)
+			MeshKit.part(_visual, MeshKit.sphere(0.035 * s), _readable(color), Vector3(0.0, 0.035 * s, -0.08 * s))
+			var feather := _readable(color.lightened(0.25))
+			for k in 5:
+				var f := MeshKit.part(_visual, MeshKit.box(Vector3(0.02, 0.004, 0.07) * s), feather,
+					Vector3(rng.randf_range(-0.2, 0.2), 0.01, rng.randf_range(-0.2, 0.2)), Vector3(0, rng.randf() * TAU, 0))
+				f.scale *= 1.5
 		"stones":
 			var stone := _readable(Color(0.72, 0.7, 0.66))
 			for k in rng.randi_range(3, 4):

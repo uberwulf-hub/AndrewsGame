@@ -110,6 +110,7 @@ var _action_soft := true  # moving off cancels it, so feet never slide
 var _punch_cooldown := 0.0
 var _punch_landed := false
 var _punch_arm: PunchArm
+var _sling_draw: SlingDraw
 var _cross_legs: CrossLegs
 var _sitting := false  # cross-legged on the ground (blended in by _cross_legs)
 var _sit_forward := Vector3.FORWARD
@@ -234,6 +235,7 @@ func _process(delta: float) -> void:
 	_muzzle_light.light_energy = lerpf(_muzzle_light.light_energy, 0.0, 1.0 - exp(-30.0 * delta))
 	var gun_pitch := _pitch if (aiming or _shot_pose > 0.0) else 0.0
 	_gun_socket.rotation.x = lerpf(_gun_socket.rotation.x, gun_pitch, smooth)
+	_follow_hand(delta)
 	Game.underwater = camera.global_position.y < Game.WATER_LEVEL - 0.05
 
 
@@ -526,7 +528,10 @@ func _physics_process(delta: float) -> void:
 		else:
 			velocity.y -= GRAVITY * delta
 			_fall_speed = minf(_fall_speed, velocity.y)
+		var was_grounded := is_on_floor()
 		move_and_slide()
+		if was_grounded and is_on_wall():
+			_step_up(wish, delta)
 	_clamp_to_world()
 	if is_on_floor() and not _was_on_floor:
 		if _fall_speed < -6.0:
@@ -545,6 +550,8 @@ func _physics_process(delta: float) -> void:
 		_interact()
 	if _placer:
 		_update_placing(captured)
+	elif weapon and _uses_sling():
+		_update_pull(delta, captured)
 	elif weapon:
 		var wants_fire := Input.is_action_pressed("fire") if weapon.automatic else Input.is_action_just_pressed("fire")
 		if wants_fire and captured:
@@ -613,7 +620,7 @@ func _try_fire() -> void:
 	_fire_timer = 1.0 / rate
 	_shot_pose = 0.6
 	if _fire_timer >= 0.3:  # a kick of recoil for slower tools; quick ones just hold the aim
-		_act("shoot", minf(_fire_timer, 0.45))
+		_act(_shoot_state(), minf(_fire_timer, 0.45))
 	var muzzle := _gun_model.to_global(_gun_model.get_meta("muzzle"))
 	for i in weapon.pellets:
 		_fire_ray(muzzle)
@@ -645,19 +652,118 @@ func _play_shot_sound() -> void:
 		Audio.play(ELEMENT_SOUNDS[weapon.element], null, 0.0, 1.0, 0.1)
 
 
+# --- The sling's draw ------------------------------------------------------------
+# Hold fire to pull the band back (it takes PULL_TIME). Let go too early and
+# the stone flies weak and wobbly; let go just after it's fully drawn (the
+# sweet spot, a little longer with Aim) for a perfect shot; hold on past that
+# and his arm starts to shake, until he gets tired and lets go by himself.
+
+signal sling_released(quality: String)
+
+const PULL_TIME := 0.7
+const SWEET_TIME := 0.4
+const TIRE_TIME := 2.0
+
+## How far the band is drawn (0..1), and how long it's been held at full.
+var pull := 0.0
+var pull_hold := 0.0
+var pulling := false
+var _shot_power := 1.0
+var _shot_wobble := 1.0
+
+
+## How long the sweet spot lasts after a full draw: Aim stretches it a little.
+func sweet_window() -> float:
+	return SWEET_TIME + 0.006 * (Game.skill_level("Aim") - 1)
+
+
+## 0 in the sweet spot, rising to 1 as his arm gives out.
+func tremble() -> float:
+	return clampf((pull_hold - sweet_window()) / (TIRE_TIME - sweet_window()), 0.0, 1.0)
+
+
+func _update_pull(delta: float, captured: bool) -> void:
+	if not pulling:
+		if Input.is_action_just_pressed("fire") and captured and not swimming:
+			if ammo <= 0 or is_reloading():
+				_try_fire()  # the dry click, and a reload
+			elif _fire_timer <= 0.0:
+				pulling = true
+				pull = 0.0
+				pull_hold = 0.0
+				Audio.play("reload_out", null, -10.0, 0.7)
+		return
+	if not Input.is_action_pressed("fire") or not captured or swimming:
+		_release_pull(false)
+		return
+	pull = minf(1.0, pull + delta / (PULL_TIME * (0.85 if aiming else 1.0)))
+	if pull >= 1.0:
+		pull_hold += delta
+		if pull_hold >= TIRE_TIME:
+			_release_pull(true)
+
+
+func _release_pull(tired: bool) -> void:
+	pulling = false
+	if pull < 0.15 and not tired:
+		pull = 0.0
+		return  # barely pulled: no shot
+	var quality := "shaky"
+	if tired:
+		quality = "tired"
+		_shot_power = 0.5
+		_shot_wobble = 9.0
+	elif pull < 1.0:
+		quality = "weak"
+		_shot_power = pull * pull
+		_shot_wobble = 1.0 + (1.0 - pull) * 6.0
+	elif pull_hold <= sweet_window():
+		quality = "perfect"
+		_shot_power = 1.2
+		_shot_wobble = 0.0
+	else:
+		_shot_power = 1.0
+		_shot_wobble = 1.5 + tremble() * 6.0
+	_try_fire()
+	if quality == "perfect":
+		Audio.play("ui_notify", null, -6.0, 1.6)
+		Game.practice("Aim", 0.5)
+	sling_released.emit(quality)
+	_shot_power = 1.0
+	_shot_wobble = 1.0
+	pull = 0.0
+	pull_hold = 0.0
+
+
 func _fire_ray(muzzle: Vector3) -> void:
 	var cam_basis := camera.global_basis
 	var forward := -cam_basis.z
-	var spread := weapon.spread * (0.35 if aiming else 1.0) * aim_steadiness()
+	var spread := weapon.spread * (0.35 if aiming else 1.0) * aim_steadiness() * _shot_wobble + maxf(_shot_wobble - 1.0, 0.0) * 0.012
 	var dir := (forward
 		+ cam_basis.x * Game.rng.randf_range(-spread, spread)
 		+ cam_basis.y * Game.rng.randf_range(-spread, spread)).normalized()
 	# Start at the shoulder (spring arm origin) so walls behind the player never block shots.
 	var origin := camera.global_position + forward * _spring.get_hit_length()
-	var target := origin + dir * 300.0
+	# A weak sling shot doesn't carry far.
+	var reach := lerpf(8.0, 300.0, clampf(_shot_power, 0.0, 1.0) ** 2)
+	var target := origin + dir * reach
 	var query := PhysicsRayQueryParameters3D.create(origin, target, 1 | 4, [get_rid()])
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	var end := target
+	if not hit.is_empty():
+		end = hit["position"]
+	# Birds are too small for colliders: a stone passing close enough hits one.
+	var bird := _bird_on_line(origin, end)
+	if bird:
+		end = bird.global_position
+		if _shot_power >= 0.35:
+			bird.shot_down(global_position)
+			Game.practice("Aim", 1.0)
+			hit_confirmed.emit(false, true)
+		else:
+			bird.take_off(origin)  # too weak: it just startles
+		FX.tracer(muzzle, end, WeaponData.ELEMENT_COLORS[weapon.element])
+		return
 	if not hit.is_empty():
 		end = hit["position"]
 		var collider = hit["collider"]
@@ -670,8 +776,57 @@ func _fire_ray(muzzle: Vector3) -> void:
 	FX.tracer(muzzle, end, WeaponData.ELEMENT_COLORS[weapon.element])
 
 
+## Walking into a low ledge (a step, the Sanctum's rim, a flat rock) steps up
+## onto it instead of getting stuck, if it's no taller than STEP_HEIGHT and
+## there's flat room on top.
+const STEP_HEIGHT := 0.55
+
+
+func _step_up(wish: Vector3, delta: float) -> void:
+	var flat := Vector3(wish.x, 0, wish.z)
+	if flat.length() < 0.1:
+		return
+	var ahead := flat.normalized() * maxf(Vector2(velocity.x, velocity.z).length() * delta, 0.08) + flat.normalized() * 0.12
+	var up := Vector3.UP * STEP_HEIGHT
+	var start := global_transform
+	if test_move(start, up):
+		return  # no headroom
+	var raised := start.translated(up)
+	if test_move(raised, ahead):
+		return  # still a wall up there: too tall to step
+	var over := raised.translated(ahead)
+	var hit := KinematicCollision3D.new()
+	if not test_move(over, -up * 1.05, hit) or hit.get_normal().y < 0.7:
+		return  # nothing flat to stand on
+	global_position = over.origin + hit.get_travel()
+	velocity.y = 0.0
+	apply_floor_snap()
+
+
+## The nearest bird the shot passes within reach of, between `from` and `to`.
+func _bird_on_line(from: Vector3, to: Vector3) -> Bird:
+	var best: Bird = null
+	var best_t := INF
+	var seg := to - from
+	var length := seg.length()
+	if length < 0.01:
+		return null
+	var dir := seg / length
+	for node in get_tree().get_nodes_in_group("birds"):
+		var b := node as Bird
+		var c := b.global_position + Vector3.UP * 0.08
+		var t := (c - from).dot(dir)
+		if t < 0.0 or t > length or t > best_t:
+			continue
+		var size: float = Bird.KINDS[b.kind][4]
+		if (from + dir * t).distance_to(c) < 0.16 + 0.06 * size:
+			best = b
+			best_t = t
+	return best
+
+
 func _hit_enemy(enemy: Enemy, pos: Vector3) -> void:
-	var dmg := weapon.damage * damage_multiplier()
+	var dmg := weapon.damage * damage_multiplier() * _shot_power
 	var crit := Game.rng.randf() < weapon.crit_chance
 	if crit:
 		dmg *= 2.0
@@ -927,6 +1082,99 @@ func equip(w: WeaponData) -> void:
 	_gun_model = WeaponModel.build(w)
 	_gun_socket.add_child(_gun_model)
 	_muzzle_light.position = _gun_model.get_meta("muzzle")
+	_build_band()
+
+
+# --- Tools in hand -------------------------------------------------------------
+# With a rig that has hand slots, the tool rides in a hand: the sling's fork in
+# the left, the rest in the right. It still points where you aim. The sling's
+# band is drawn live: tied to the fork tips, pulled back by the right hand
+# while aiming, and snapping forward when the stone flies.
+
+var _grip_l: BoneAttachment3D
+var _grip_r: BoneAttachment3D
+var _band: Array[MeshInstance3D] = []  # two cords and the pouch
+
+
+func _uses_sling() -> bool:
+	return _gun_model != null and _gun_model.has_meta("band_tips")
+
+
+## The hand that holds the tool: the sling's fork goes in the left.
+func _grip() -> BoneAttachment3D:
+	return _grip_l if _uses_sling() else _grip_r
+
+
+## Aiming and shooting poses: both hands for the sling, one for the rest.
+func _aim_state() -> String:
+	return "2h_ranged_aiming" if _uses_sling() and _rig and _rig.has_state("2h_ranged_aiming") else "aim_idle"
+
+
+func _shoot_state() -> String:
+	return "2h_ranged_shoot" if _uses_sling() and _rig and _rig.has_state("2h_ranged_shoot") else "shoot"
+
+
+func _build_band() -> void:
+	for b in _band:
+		b.queue_free()
+	_band.clear()
+	if not _uses_sling() or _grip_r == null:
+		return
+	for n in _gun_model.find_children("Band", "", true, false):
+		(n as Node3D).visible = false
+	var mats: Array = _gun_model.get_meta("band_mats")
+	for k in 3:
+		var mi := MeshInstance3D.new()
+		mi.mesh = MeshKit.cyl(0.006, 0.006, 1.0, 4) if k < 2 else MeshKit.sphere(0.035)
+		mi.material_override = mats[0] if k < 2 else mats[1]
+		mi.top_level = true
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_gun_model.add_child(mi)
+		_band.append(mi)
+
+
+## Puts the tool in its hand (keeping its aim) and draws the sling's band.
+func _follow_hand(delta: float) -> void:
+	var grip := _grip()
+	# The band follows the right hand while he pulls it back (it shakes once
+	# his arm tires), then snaps forward to rest between the fork tips.
+	var sling := _uses_sling() and grip != null and swimming == false and _action_time <= 0.0
+	var holding := sling and (aiming or pulling or _shot_pose > 0.0)
+	if _sling_draw:
+		_sling_draw.aim_dir = -camera.global_basis.z
+		_sling_draw.hold = move_toward(_sling_draw.hold, 1.0 if holding else 0.0, delta * 5.0)
+		if pulling and sling:
+			_sling_draw.draw = pull
+		else:
+			_sling_draw.draw = move_toward(_sling_draw.draw, 0.0, delta * 14.0)  # the release is a snap
+		_sling_draw.shake = tremble() if pulling else 0.0
+	if grip == null or _gun_model == null:
+		return
+	_gun_socket.global_position = grip.global_position
+	if _band.is_empty():
+		return
+	var tips: Array = _gun_model.get_meta("band_tips")
+	var a: Vector3 = _gun_model.to_global(tips[0])
+	var b: Vector3 = _gun_model.to_global(tips[1])
+	var rest := _gun_model.to_global(Vector3(0, 0.2, 0.05))
+	var amount := _sling_draw.draw if _sling_draw else 0.0
+	var pouch := rest.lerp(_grip_r.global_position, amount)
+	_cord(_band[0], a, pouch)
+	_cord(_band[1], b, pouch)
+	_band[2].global_position = pouch
+
+
+## Stretches a unit-tall cylinder between two points.
+func _cord(mi: MeshInstance3D, from: Vector3, to: Vector3) -> void:
+	var d := to - from
+	var length := maxf(d.length(), 0.001)
+	var y := d / length
+	var x := y.cross(Vector3.UP)
+	if x.length() < 0.01:
+		x = y.cross(Vector3.RIGHT)
+	x = x.normalized()
+	var z := x.cross(y)
+	mi.global_transform = Transform3D(Basis(x, y * length, z), (from + to) * 0.5)
 
 
 # --- Survival ----------------------------------------------------------------
@@ -1544,7 +1792,7 @@ func _update_model(delta: float, wish: Vector3) -> void:
 	var smooth := 1.0 - exp(-14.0 * delta)
 	var moving := wish.length() > 0.1
 	var move_yaw := atan2(-wish.x, -wish.z) if moving else _legs.rotation.y
-	var combat_pose := aiming or _shot_pose > 0.0
+	var combat_pose := aiming or pulling or _shot_pose > 0.0
 	var facing_aim := combat_pose or _punch_time > 0.0
 	var aim_yaw := _yaw if facing_aim else (move_yaw if moving else _torso.rotation.y)
 
@@ -1583,7 +1831,7 @@ func _update_model(delta: float, wish: Vector3) -> void:
 func _update_swim_pose(delta: float, wish: Vector3) -> void:
 	var smooth := 1.0 - exp(-8.0 * delta)
 	var moving := wish.length() > 0.1
-	var combat_pose := aiming or _shot_pose > 0.0
+	var combat_pose := aiming or pulling or _shot_pose > 0.0
 	var target_facing := _swim_facing
 	if combat_pose:
 		target_facing = _yaw
@@ -1729,6 +1977,19 @@ func _attach_rig() -> void:
 	if _rig.name == "Rig_ranger":
 		_shoulder = RANGER_SHOULDER  # the camera is built after this
 		_gun_socket.position = RANGER_HAND - Vector3(0, TORSO_HEIGHT, 0)
+		# Its hands have prop slots: tools ride in them and move with every
+		# animation (see _follow_hand).
+		for side in ["l", "r"]:
+			if _rig.skeleton.find_bone("handslot." + side) >= 0:
+				var grip := BoneAttachment3D.new()
+				grip.bone_name = "handslot." + side
+				_rig.skeleton.add_child(grip)
+				if side == "l":
+					_grip_l = grip
+				else:
+					_grip_r = grip
+		_sling_draw = SlingDraw.new()
+		_rig.skeleton.add_child(_sling_draw)
 	else:
 		_gun_socket.position = Vector3(0.12, 1.38, -0.42) - Vector3(0, TORSO_HEIGHT, 0)
 	_rig.play("idle")
@@ -1762,7 +2023,7 @@ func _update_rig(combat_pose: bool) -> void:
 		else:
 			_rig.play("run", clampf(horizontal / 5.0, 0.8, 1.7))
 	else:
-		_rig.play("aim_idle" if combat_pose else "idle")
+		_rig.play(_aim_state() if combat_pose else "idle")
 
 
 func _limb(hip: Vector3, size: Vector3, material: Material) -> Node3D:

@@ -276,6 +276,7 @@ class Page:
 	signal read
 
 	var ready_to_read := false
+	var was_read := false
 	var _light: OmniLight3D
 	var _t := 0.0
 
@@ -296,10 +297,16 @@ class Page:
 		_light.omni_range = 3.5
 		_light.position.y = 0.35
 		add_child(_light)
-
+	## Glows brighter once the story points to it. It can be read any time it's
+	## found, though: nothing you can see should just sit there.
 	func light_up() -> void:
+		if was_read:
+			return
 		ready_to_read = true
-		add_to_group("usables")
+
+	func _enter_tree() -> void:
+		if not was_read:
+			add_to_group("usables")
 
 	func _process(delta: float) -> void:
 		_t += delta
@@ -313,9 +320,16 @@ class Page:
 		return "[E] Read the page"
 
 	func use(_player: Player) -> void:
-		if not ready_to_read:
+		if was_read:
 			return
+		was_read = true
 		ready_to_read = false
 		remove_from_group("usables")
 		Audio.play("gear_rustle", global_position, -4.0, 1.3)
 		read.emit()
+
+	## Already read (say, in a loaded game): stays on the table, but quiet.
+	func mark_read() -> void:
+		was_read = true
+		ready_to_read = false
+		remove_from_group("usables")

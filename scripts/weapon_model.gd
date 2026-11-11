@@ -46,8 +46,12 @@ static func _sling(root: Node3D, wood: Material, cord: Material, light: Material
 	MeshKit.part(root, MeshKit.cyl(0.032, 0.032, 0.08, 6), cord, Vector3(0, -0.06, 0.0))
 	for side in [-1.0, 1.0]:
 		MeshKit.part(root, MeshKit.cyl(0.016, 0.024, 0.2, 6), wood, Vector3(side * 0.05, 0.13, 0.0), Vector3(0, 0, -side * 0.45))
-		MeshKit.part(root, MeshKit.cyl(0.006, 0.006, 0.16, 4), cord, Vector3(side * 0.05, 0.22, 0.07), Vector3(PI / 2 - 0.3, 0, side * 0.6))
-	MeshKit.part(root, MeshKit.sphere(0.035), light, Vector3(0, 0.2, 0.12))
+		MeshKit.part(root, MeshKit.cyl(0.006, 0.006, 0.16, 4), cord, Vector3(side * 0.05, 0.22, 0.07), Vector3(PI / 2 - 0.3, 0, side * 0.6)).name = "Band"
+	MeshKit.part(root, MeshKit.sphere(0.035), light, Vector3(0, 0.2, 0.12)).name = "Band"
+	# Where the band ties onto the fork, and its materials, so the hero can
+	# draw it back with his other hand (see Player, "the sling's band").
+	root.set_meta("band_tips", [Vector3(-0.095, 0.22, 0.0), Vector3(0.095, 0.22, 0.0)])
+	root.set_meta("band_mats", [cord, light])
 	return Vector3(0, 0.2, -0.1)
 
 

@@ -98,6 +98,8 @@ var _damage_flash: ColorRect
 var _underwater_overlay: ColorRect
 var _air_bar: ProgressBar
 var _air_label: Label
+var _pull_bar: ProgressBar
+var _pull_label: Label
 var _faint := 0.0
 var _pulse := 0.0
 
@@ -182,6 +184,12 @@ func _ready() -> void:
 	_air_label = _place(_label("Air", 15, Color(0.8, 0.92, 1.0), HORIZONTAL_ALIGNMENT_CENTER), Vector2(0.5, 0.5), Vector2(-90, 46), Vector2(180, 22))
 	_air_bar.visible = false
 	_air_label.visible = false
+	# The sling's draw, just under the crosshair: fills as he pulls back, and the
+	# label says when to let go.
+	_pull_bar = _bar(Color(0.95, 0.8, 0.45), Vector2(0.5, 0.5), Vector2(-60, 34), Vector2(120, 8))
+	_pull_label = _place(_label("", 16, Color(1.0, 0.95, 0.8), HORIZONTAL_ALIGNMENT_CENTER), Vector2(0.5, 0.5), Vector2(-120, 44), Vector2(240, 22))
+	_pull_bar.visible = false
+	_pull_label.visible = false
 	for k in 2:
 		_pet_rows[["fox", "otter"][k]] = _pet_row(["Fox", "Otter"][k], -290 + k * 22)
 
@@ -201,6 +209,7 @@ func _ready() -> void:
 func bind(player: Player) -> void:
 	_player = player
 	_inventory.player = player
+	player.sling_released.connect(_on_sling_released)
 	if Game.shot_inventory:
 		get_tree().create_timer(1.0).timeout.connect(func():
 			Game.add_item("Sticks", 6)
@@ -285,6 +294,7 @@ func _open_fire(fire: Campfire) -> void:
 ## tint plus the faint (blur, gray, closing dark) as air runs out.
 func _update_breath(delta: float) -> void:
 	var p := _player
+	_update_pull_meter(p)
 	var show_air := p.air < 0.999 and not p.knocked_out
 	_air_bar.visible = show_air
 	_air_label.visible = show_air
@@ -682,3 +692,37 @@ func close_map() -> void:
 		if _map_froze:
 			_player.frozen = false
 			_map_froze = false)
+
+
+## The sling's draw meter: gold while pulling, bright white-gold in the sweet
+## spot ("Now!"), then reddening and shaking as his arm tires.
+func _update_pull_meter(p: Player) -> void:
+	var show := p.pulling
+	_pull_bar.visible = show
+	if not _pull_label.has_meta("until") or Time.get_ticks_msec() > int(_pull_label.get_meta("until")):
+		_pull_label.visible = show and p.pull >= 1.0
+		_pull_label.text = "Now!" if p.tremble() <= 0.0 else "Arm's getting tired..."
+	if not show:
+		return
+	_pull_bar.value = p.pull
+	var fill := _pull_bar.get_theme_stylebox("fill") as StyleBoxFlat
+	var shake := p.tremble()
+	if p.pull < 1.0:
+		fill.bg_color = Color(0.95, 0.8, 0.45).darkened(0.25 * (1.0 - p.pull))
+	elif shake <= 0.0:
+		fill.bg_color = Color(1.0, 0.98, 0.8)
+	else:
+		fill.bg_color = Color(1.0, 0.98, 0.8).lerp(Color(1.0, 0.35, 0.3), shake)
+	var jitter := sin(Time.get_ticks_msec() * 0.06) * 3.0 * shake
+	_pull_bar.offset_left = -60.0 + jitter
+	_pull_bar.offset_right = 60.0 + jitter
+
+
+func _on_sling_released(quality: String) -> void:
+	var words := {"perfect": "Perfect shot!", "weak": "Too soon: a weak shot", "shaky": "A bit shaky...", "tired": "His arm gave out!"}
+	_pull_label.text = words.get(quality, "")
+	_pull_label.add_theme_color_override("font_color", Color(1.0, 0.92, 0.5) if quality == "perfect" else Color(0.95, 0.85, 0.8))
+	_pull_label.visible = true
+	_pull_label.set_meta("until", Time.get_ticks_msec() + 1100)
+	get_tree().create_timer(1.15).timeout.connect(func():
+		_pull_label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.8)))

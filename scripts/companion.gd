@@ -215,7 +215,7 @@ func _process(delta: float) -> void:
 		_snack_check -= delta
 		if _snack_check <= 0.0:
 			_snack_check = 4.0
-			if hunger < SNACK_BELOW and _go_snack():
+			if _gift_left_behind(player) or (hunger < SNACK_BELOW and _go_snack()):
 				return
 	var to_player := player.global_position - body.position
 	to_player.y = 0.0
@@ -527,7 +527,7 @@ func _bring_back(player: Player) -> void:
 		away = body.position - player.global_position
 	var drop := player.global_position + away.normalized() * 1.1
 	drop.y = Game.ground_at(drop.x, drop.z)
-	Gatherable.spawn(body.get_parent(), drop, _find[0], _rng)
+	_gift = Gatherable.spawn(body.get_parent(), drop, _find[0], _rng)
 	Game.practice(Game.PET_KNACKS[who], 4.0)
 	say([_find[2]])
 	_hop_v = 3.0
@@ -757,6 +757,33 @@ const SNACK_LINES := {
 }
 var _snack_check := 4.0
 
+## The food he last brought you. Walk off and leave it, and he eats it himself.
+var _gift: Gatherable
+var _gift_snack := false  # this snack run is the gift you left behind
+const GIFT_LEFT_AT := 16.0  # how far you get before it counts as left behind
+const LEFT_BEHIND_LINES := {
+	"fox": ["Fine. If you're not going to eat it, I'm not letting it go to waste.", "Your loss. Mmm. Very much your loss."],
+	"otter": ["You forgot your snack! ...Okay, I'll eat it so it doesn't go to waste!", "Nobody leaves a good snack behind. Not on MY watch. Nom!"],
+}
+
+
+## You walked off without the food he brought you: he trots back and eats it.
+func _gift_left_behind(player: Player) -> bool:
+	if not is_instance_valid(_gift) or not _gift.available:
+		_gift = null
+		return false
+	if _gift.global_position.distance_to(player.global_position) < GIFT_LEFT_AT:
+		return false
+	_snack = _gift
+	_gift = null
+	_gift_snack = true
+	_snacking = true
+	_run_spot = _snack.global_position
+	_run = Run.GOING
+	_run_time = 0.0
+	state = State.FORAGING
+	return true
+
 
 ## Heads for the nearest food lying close by. False if there's none.
 func _go_snack() -> bool:
@@ -795,9 +822,11 @@ func _snack_arrived() -> bool:
 		_eat(Gatherable.KINDS[g.kind].item, 2)
 		g.queue_free()
 		_hop_v = 3.0
-		say([SNACK_LINES[who].pick_random()])
+		say([(LEFT_BEHIND_LINES if _gift_snack else SNACK_LINES)[who].pick_random()])
+		_gift_snack = false
 	else:
 		_snack_check = 0.5  # beaten to it: look again soon
+		_gift_snack = false
 	return true
 
 

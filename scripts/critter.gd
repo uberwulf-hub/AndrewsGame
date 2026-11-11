@@ -20,7 +20,8 @@ var _back := 0.0  # 0 belly down, 1 floating on his back
 var _shake := 0.0  # seconds left of shaking off water
 var _wet := 0.0
 var _wet_mat: StandardMaterial3D
-## Lying down for a rest: the Fox on his side, the Otter flat on his back.
+## Lying down for a rest: both curl up on their side (the Otter only floats
+## on his back in the water).
 var lounging := false
 var _bob := 0.0  # the little trot bounce, kept apart from the roll's lift
 var _lounge := 0.0
@@ -124,8 +125,10 @@ func _process(delta: float) -> void:
 		return
 	var paddling := swimming and (_speed > 0.3 or absf(dive) > 0.1)
 	var resting := lounging and not swimming and _speed < 0.2
-	_back = move_toward(_back, 1.0 if (swimming and not paddling) or resting else 0.0, delta * 1.5)
-	var roll := PI * smoothstep(0.0, 1.0, _back)
+	# Floating on his back in the water; on dry land he curls up on his side.
+	_back = move_toward(_back, 1.0 if swimming and not paddling else 0.0, delta * 1.5)
+	_lounge = move_toward(_lounge, 1.0 if resting else 0.0, delta * 1.5)
+	var roll := PI * smoothstep(0.0, 1.0, _back) + 1.35 * smoothstep(0.0, 1.0, _lounge)
 	if swimming:
 		# Swimming like a little torpedo: the whole body ripples, the tail sculls.
 		_body.rotation.x = lerpf(_body.rotation.x, (sin(_t * 7.0) * 0.12 - dive * 0.7) if paddling else 0.0, smooth)
