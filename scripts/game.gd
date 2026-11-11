@@ -356,6 +356,9 @@ var shot_help := false
 
 
 func _ready() -> void:
+	# The project keeps its old internal name so saves stay where they are
+	# (user://), but the window and taskbar say the game's real name.
+	get_window().title = "Finding Home"
 	rng.randomize()
 	terrain_noise.seed = 7331
 	terrain_noise.frequency = 0.0055
