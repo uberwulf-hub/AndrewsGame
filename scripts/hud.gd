@@ -235,14 +235,14 @@ func bind(player: Player) -> void:
 
 
 ## A thought bubble over any character (the hero, the Fox, the Otter).
-func think(lines: Array, seconds_each := 3.6, done := Callable(), who: Node3D = null, tint := Color(0.97, 0.96, 0.93), head_height := 2.2) -> ThoughtBubble:
+func think(lines: Array, seconds_each := 3.6, done := Callable(), who: Node3D = null, tint := Color(0.97, 0.96, 0.93), head_height := 2.2, voice := "") -> ThoughtBubble:
 	if who == null:
 		# A quick yelp while he's mid-thought floats above the thought instead of on it.
 		if is_instance_valid(_hero_bubble) and _hero_bubble.visible:
-			return ThoughtBubble.show_for(_root, _player, lines, seconds_each, tint, head_height + 0.75, done)
-		_hero_bubble = ThoughtBubble.show_for(_root, _player, lines, seconds_each, tint, head_height, done)
+			return ThoughtBubble.show_for(_root, _player, lines, seconds_each, tint, head_height + 0.75, done, "hero")
+		_hero_bubble = ThoughtBubble.show_for(_root, _player, lines, seconds_each, tint, head_height, done, "hero")
 		return _hero_bubble
-	return ThoughtBubble.show_for(_root, who, lines, seconds_each, tint, head_height, done)
+	return ThoughtBubble.show_for(_root, who, lines, seconds_each, tint, head_height, done, voice)
 
 
 ## Full-screen color that fades away (used for waking from the dream's white).

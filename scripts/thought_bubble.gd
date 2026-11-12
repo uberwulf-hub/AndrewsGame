@@ -6,13 +6,16 @@ extends Control
 
 var target: Node3D
 var height := 2.2
+## Whose babble voice reads the lines out ("hero", "fox", "otter"; "" = silent).
+var voice := ""
 var _panel: PanelContainer
 var _label: Label
 var _dots: Array[Panel] = []
 
 
-static func show_for(parent: Control, who: Node3D, lines: Array, seconds_each := 3.6, tint := Color(0.97, 0.96, 0.93), head_height := 2.2, done := Callable()) -> ThoughtBubble:
+static func show_for(parent: Control, who: Node3D, lines: Array, seconds_each := 3.6, tint := Color(0.97, 0.96, 0.93), head_height := 2.2, done := Callable(), voice := "") -> ThoughtBubble:
 	var b := ThoughtBubble.new()
+	b.voice = voice
 	b.target = who
 	b.height = head_height
 	b.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -61,6 +64,7 @@ func _play(lines: Array, seconds_each: float, done: Callable) -> void:
 	for line in lines:
 		tw.tween_callback(func():
 			_label.text = "\"%s\"" % line
+			Babble.speak(self, voice, line)
 			_panel.reset_size())
 		tw.tween_property(self, "modulate:a", 1.0, 0.35)
 		tw.tween_interval(seconds_each)

@@ -161,7 +161,7 @@ func say(lines: Array) -> void:
 	if hud:
 		if is_instance_valid(_bubble):
 			_bubble.queue_free()  # a new thought replaces the last one
-		_bubble = hud.think(lines, 3.4, Callable(), body, Color(1.0, 0.94, 0.86) if who == "fox" else Color(0.9, 0.95, 1.0), head_height + 0.6)
+		_bubble = hud.think(lines, 3.4, Callable(), body, Color(1.0, 0.94, 0.86) if who == "fox" else Color(0.9, 0.95, 1.0), head_height + 0.6, who)
 
 
 func _sleep() -> void:
