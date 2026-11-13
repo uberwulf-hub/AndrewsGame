@@ -127,14 +127,18 @@ static func from_look(look: Dictionary) -> Figure:
 	return f
 
 
+## The game's own hero (the KayKit ranger) when it's there, so the dream and
+## the title show the same man you play; else the photo-made hero.
 static func hero() -> Figure:
+	if CharacterRig.exists("ranger"):
+		return _rigged("ranger", 1.8, HERO_LOOK)
 	return _rigged("hero", 1.93, HERO_LOOK)
 
 
 ## Uses the rigged model in models/<rig_name> when there is one, else builds
 ## the primitive figure from `look`.
-static func _rigged(rig_name: String, height: float, look: Dictionary) -> Figure:
-	var rig := CharacterRig.create(rig_name, height)
+static func _rigged(rig_name: String, height: float, look: Dictionary, anims_from := "hero") -> Figure:
+	var rig := CharacterRig.create(rig_name, height, anims_from)
 	if rig == null:
 		return from_look(look)
 	var f := Figure.new()
@@ -156,7 +160,121 @@ static func younger_kid() -> Figure:
 
 
 static func mate() -> Figure:
+	if CharacterRig.exists("princess"):
+		return princess()
 	return _rigged("mate", 1.50, MATE_LOOK)
+
+
+## The hero's love in the dream, as a princess in the hero's own style: the
+## KayKit adventurer with long hair (Kay Lousberg, CC0), moving with the
+## hero's animations, recolored with her dark hair, a rose gown and a cape,
+## a flared skirt and a little gold crown.
+const PRINCESS_HEIGHT := 1.55
+## Texture swatches (column, row of the 8x4 gradient atlas) -> new color.
+const PRINCESS_COLORS := {
+	Vector2i(1, 0): Color(0.1, 0.075, 0.085),  # hair: nearly black, like hers
+	Vector2i(0, 1): Color(0.95, 0.6, 0.72),    # tunic -> rose bodice
+	Vector2i(3, 2): Color(0.95, 0.6, 0.72),    # leggings (under the skirt)
+	Vector2i(1, 1): Color(0.66, 0.1, 0.3),     # cape and scarf: deep raspberry
+	Vector2i(5, 0): Color(0.98, 0.78, 0.32),   # belt and buckles -> gold
+	Vector2i(6, 0): Color(0.98, 0.78, 0.32),
+	Vector2i(7, 2): Color(0.98, 0.95, 0.93),   # gloves -> white
+	Vector2i(7, 1): Color(0.9, 0.66, 0.74),    # boots -> soft pink slippers
+}
+static var _princess_tex: Texture2D
+
+
+static func princess() -> Figure:
+	var f := _rigged("princess", PRINCESS_HEIGHT, MATE_LOOK, "ranger")
+	var rig := f._rig
+	if rig == null or rig.skeleton == null:
+		return f
+	for mi: MeshInstance3D in rig.find_children("*", "MeshInstance3D", true, false):
+		for s in mi.mesh.get_surface_count():
+			var base := mi.get_active_material(s) as BaseMaterial3D
+			if base and base.albedo_texture:
+				var m := base.duplicate() as BaseMaterial3D
+				m.albedo_texture = _princess_texture(base.albedo_texture)
+				mi.set_surface_override_material(s, m)
+	_dress(rig.skeleton)
+	return f
+
+
+static func _princess_texture(source: Texture2D) -> Texture2D:
+	if _princess_tex:
+		return _princess_tex
+	var img := source.get_image()
+	if img.is_compressed():
+		img.decompress()
+	img.convert(Image.FORMAT_RGBA8)
+	var tw := img.get_width() / 8
+	var th := img.get_height() / 4
+	for tile: Vector2i in PRINCESS_COLORS:
+		var target: Color = PRINCESS_COLORS[tile]
+		var mean := 0.0
+		for y in th:
+			mean += img.get_pixel(tile.x * tw + tw / 2, tile.y * th + y).get_luminance()
+		mean = maxf(mean / th, 0.05)
+		for y in th:
+			# Keep the swatch's top-to-bottom shading, in the new color.
+			var shade := clampf(img.get_pixel(tile.x * tw + tw / 2, tile.y * th + y).get_luminance() / mean, 0.55, 1.35)
+			var c := Color(target.r * shade, target.g * shade, target.b * shade)
+			for x in tw:
+				img.set_pixel(tile.x * tw + x, tile.y * th + y, c)
+	img.generate_mipmaps()  # without them, far views sample the old colors
+	_princess_tex = ImageTexture.create_from_image(img)
+	return _princess_tex
+
+
+## A flared skirt from the hips to the ankles and a small crown, each riding
+## its bone. Sizes come from the skeleton, in its own units.
+static func _dress(sk: Skeleton3D) -> void:
+	var hips := sk.find_bone("hips")
+	var head := sk.find_bone("head")
+	var leg_l := sk.find_bone("upperleg.l")
+	var leg_r := sk.find_bone("upperleg.r")
+	if hips < 0 or head < 0 or leg_l < 0 or leg_r < 0:
+		return
+	var hip_rest := sk.get_bone_global_rest(hips)
+	var hip_y := hip_rest.origin.y
+	var hip_w := sk.get_bone_global_rest(leg_l).origin.distance_to(sk.get_bone_global_rest(leg_r).origin)
+	var gown := MeshKit.mat(Color(0.95, 0.6, 0.72), 0.7)
+	var trim := MeshKit.mat(Color(0.98, 0.8, 0.36), 0.35, 0.8)
+	var skirt_at := BoneAttachment3D.new()
+	skirt_at.bone_name = "hips"
+	sk.add_child(skirt_at)
+	var top := hip_y * 1.08
+	var bottom := hip_y * 0.12
+	var height := top - bottom
+	var skirt := Node3D.new()
+	skirt.transform = hip_rest.affine_inverse() * Transform3D(Basis(), Vector3(hip_rest.origin.x, (top + bottom) * 0.5, hip_rest.origin.z))
+	skirt_at.add_child(skirt)
+	MeshKit.part(skirt, MeshKit.cyl(hip_w * 1.05, hip_w * 1.9, height, 14), gown)
+	MeshKit.part(skirt, MeshKit.cyl(hip_w * 1.92, hip_w * 1.96, height * 0.07, 14), trim, Vector3(0, -height * 0.47, 0))
+	MeshKit.part(skirt, MeshKit.cyl(hip_w * 1.06, hip_w * 1.08, height * 0.06, 14), trim, Vector3(0, height * 0.47, 0))
+	# The crown sits on top of the hair.
+	var head_top := hip_y
+	var head_mid := Vector3.ZERO
+	for mi: MeshInstance3D in sk.find_children("*", "MeshInstance3D", true, false):
+		if String(mi.name).to_lower().contains("head"):
+			var box := mi.transform * mi.get_aabb()
+			head_top = box.end.y
+			head_mid = box.get_center()
+	var head_rest := sk.get_bone_global_rest(head)
+	var crown_at := BoneAttachment3D.new()
+	crown_at.bone_name = "head"
+	sk.add_child(crown_at)
+	var crown := Node3D.new()
+	var unit := hip_w  # about a hand's width on these chunky proportions
+	crown.transform = head_rest.affine_inverse() * Transform3D(Basis(), Vector3(head_mid.x, head_top - unit * 0.12, head_mid.z))
+	crown_at.add_child(crown)
+	var gold := MeshKit.mat(Color(1.0, 0.8, 0.3), 0.3, 0.9)
+	MeshKit.part(crown, MeshKit.cyl(unit * 0.62, unit * 0.62, unit * 0.18, 12), gold)
+	for k in 5:
+		var a := TAU * k / 5.0
+		MeshKit.part(crown, MeshKit.cyl(0.0, unit * 0.13, unit * 0.32, 4), gold, Vector3(sin(a) * unit * 0.56, unit * 0.24, cos(a) * unit * 0.56))
+	var gem := MeshKit.glow(Color(1.0, 0.3, 0.5), 1.5)
+	MeshKit.part(crown, MeshKit.sphere(unit * 0.07), gem, Vector3(0, unit * 0.02, unit * 0.62))  # the model faces +Z
 
 
 ## Simple outfit-based person (used for the kids).

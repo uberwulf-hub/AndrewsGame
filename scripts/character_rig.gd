@@ -87,6 +87,8 @@ static func create(rig_name: String, target_height := 1.8, anims_from := "hero")
 	if DirAccess.open(anims) == null:
 		if not rig.states().is_empty():
 			return rig  # it brought its own animations
+		if rig._borrow_embedded(anims_from):
+			return rig  # same skeleton as a model that brought its own (KayKit)
 		anims = ROOT % anims_from + "anims/"
 	rig._load_animations(anims)
 	return rig
@@ -240,6 +242,31 @@ func _lowest_foot(rest: bool) -> float:
 		var pose := skeleton.get_bone_global_rest(b) if rest else skeleton.get_bone_global_pose(b)
 		lowest = minf(lowest, (to_rig * pose.origin).y)
 	return lowest - (_model.position.y - _base_y)
+
+
+## Copies the animations built into another model (e.g. the KayKit ranger's
+## whole set) when its skeleton matches ours. Returns false if it has none.
+func _borrow_embedded(from_rig: String) -> bool:
+	var path := _model_path(from_rig)
+	if path == "" or skeleton == null:
+		return false
+	var scene := load(path) as PackedScene
+	if scene == null:
+		return false
+	var holder := scene.instantiate()
+	var source := _find(holder, "Skeleton3D") as Skeleton3D
+	var player := _find(holder, "AnimationPlayer") as AnimationPlayer
+	var found := false
+	if player and source and source.find_bone("hips") >= 0 and skeleton.find_bone("hips") >= 0:
+		var ratio := _hips_ratio(source)
+		for anim_name in player.get_animation_list():
+			if anim_name == "RESET":
+				continue
+			var key := String(anim_name).to_lower()
+			_add_animation(EMBEDDED_NAMES.get(key, key), player.get_animation(anim_name).duplicate(true), ratio)
+			found = true
+	holder.free()
+	return found
 
 
 func _load_animations(dir_path: String) -> void:
