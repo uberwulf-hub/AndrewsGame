@@ -186,6 +186,7 @@ func _build_scene() -> void:
 		hero._rig.play("sit", 1.0, 0.0)
 		hero.set_process(false)  # keep the pose instead of the walk/idle picker
 		hero.position = Vector3(0.0, 0.18, -0.05)
+		_seat_on_log.call_deferred(hero)
 	var fox := Critter.fox()
 	fox.position = Vector3(1.2, 0.64, -0.25)
 	fox.rotation.y = PI - 0.6
@@ -418,3 +419,18 @@ func _anchor(c: Control, anchor: Vector2, offset: Vector2, box_size: Vector2) ->
 	c.offset_top = offset.y
 	c.offset_right = offset.x + box_size.x
 	c.offset_bottom = offset.y + box_size.y
+
+
+## Sits the hero's hips on top of the log, whatever rig he is (each model's sit
+## pose puts the hips at a different height), once the pose has been applied.
+func _seat_on_log(hero: Node3D) -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var sk: Skeleton3D = hero._rig.skeleton
+	var hips := CharacterRig.find_bone(sk, "hips")
+	if hips < 0:
+		return
+	var at := sk.global_transform * sk.get_bone_global_pose(hips).origin
+	# The log's top is at about y 0.66 and its middle at z -0.2: hips just above
+	# the bark, a touch in front of the middle.
+	hero.global_position += Vector3(0.0, 0.6 - at.y, -0.12 - at.z)
