@@ -769,6 +769,8 @@ func _fire_ray(muzzle: Vector3) -> void:
 		var collider = hit["collider"]
 		if collider is Enemy:
 			_hit_enemy(collider, end)
+		elif collider.has_method("on_sling_hit"):
+			collider.on_sling_hit(_shot_power)  # e.g. the crows' nest: needs a strong shot
 		elif collider.has_method("on_shot"):
 			collider.on_shot()
 		else:
@@ -1342,7 +1344,7 @@ func eat(item: String) -> void:
 ## needs flipping (E), then it finishes and the next piece goes on, until the
 ## raw food runs out. Moving away puts the stick down.
 const COOK_TIME := 4.0
-const FOOD_COLORS := {"Grubs": Color(0.92, 0.85, 0.62), "Mushrooms": Color(0.75, 0.6, 0.45), "Eggs": Color(0.96, 0.94, 0.88),
+const FOOD_COLORS := {"Bird meat": Color(0.9, 0.62, 0.55), "Grubs": Color(0.92, 0.85, 0.62), "Mushrooms": Color(0.75, 0.6, 0.45), "Eggs": Color(0.96, 0.94, 0.88),
 	"Fish": Color(0.62, 0.68, 0.72), "Crayfish": Color(0.75, 0.3, 0.2), "Clams": Color(0.7, 0.66, 0.58)}
 var cooking := ""  # the raw food on the stick right now
 var cook_progress := 0.0

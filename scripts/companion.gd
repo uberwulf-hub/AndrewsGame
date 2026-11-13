@@ -702,7 +702,7 @@ func _update_showing(player: Player) -> void:
 
 const HUNGER_TIME := 900.0  # seconds from full to empty
 const FAVORITES := {
-	"fox": ["Bird eggs", "Cooked eggs", "Grubs", "Toasted grubs"],
+	"fox": ["Bird eggs", "Cooked eggs", "Grubs", "Toasted grubs", "Roast bird"],
 	"otter": ["Fish", "Roast fish", "Clams", "Steamed clams", "Crayfish", "Boiled crayfish"],
 }
 const HUNGRY_LINES := {

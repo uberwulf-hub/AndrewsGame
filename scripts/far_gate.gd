@@ -229,12 +229,13 @@ class RingStone:
 
 	signal used
 	var ready_for_marble := false
+	var prompt := "[E] Hold up your marble"
 
 	func use_radius() -> float:
 		return 4.0
 
 	func use_prompt() -> String:
-		return "[E] Hold up your marble"
+		return prompt
 
 	func use(_player: Player) -> void:
 		if not ready_for_marble:

@@ -46,12 +46,13 @@ const FOODS := {
 	"Berries": 12.0, "Grubs": 6.0, "Mushrooms": 8.0, "Bird eggs": 12.0,
 	"Fish": 18.0, "Crayfish": 10.0, "Clams": 9.0,
 	"Toasted grubs": 13.0, "Roasted mushrooms": 15.0, "Cooked eggs": 22.0,
-	"Roast fish": 34.0, "Boiled crayfish": 19.0, "Steamed clams": 17.0,
+	"Roast fish": 34.0, "Boiled crayfish": 19.0, "Steamed clams": 17.0, "Roast bird": 32.0,
 }
 ## Raw food -> what it becomes over a campfire (once you know how to cook).
 const COOKS := {
 	"Grubs": "Toasted grubs", "Mushrooms": "Roasted mushrooms", "Bird eggs": "Cooked eggs",
 	"Fish": "Roast fish", "Crayfish": "Boiled crayfish", "Clams": "Steamed clams",
+	"Bird meat": "Roast bird",
 }
 ## A hot meal warms you up a little, too.
 const COOKED_WARMTH := 8.0
@@ -349,6 +350,7 @@ var shot_lake := false
 var shot_isle := false
 var shot_hill := false
 var shot_gate := false
+var shot_crow := false
 var shot_sling := false
 var shot_hero := false
 var shot_bloom := false
@@ -556,6 +558,9 @@ func _parse_args() -> void:
 				story_start = true
 			"--shot-gate":
 				shot_gate = true
+				story_start = true
+			"--shot-crow":
+				shot_crow = true
 				story_start = true
 			"--shot-hill":
 				shot_hill = true

@@ -46,6 +46,7 @@ func _ready() -> void:
 	_build_lake_ruin()
 	_build_isle()
 	_build_hill()
+	_build_crow_tree()
 
 	var player := Player.new()
 	player.name = "Player"
@@ -219,6 +220,7 @@ func save_game() -> bool:
 		"isle_stage": _isle_stage,
 		"hill_stage": _hill_stage,
 		"gate_stage": _gate_stage,
+		"crow_stage": _crow_stage,
 		"food_at_start": _food_at_start,
 		"cooking_hinted": _cooking_hinted,
 		"fox": [_fox._tips_given, _fox._feelings],
@@ -297,6 +299,18 @@ func _resume(player: Player, hud: Hud, data: Dictionary) -> void:
 			_gate.set_lit(2)
 	if _hill_stage >= 3 and _gate_stage < 0:
 		get_tree().create_timer(40.0).timeout.connect(_start_gate)
+	_crow_stage = s.get("crow_stage", -1)
+	if _crow:
+		_crow.armed = _crow_stage >= 0
+		if _crow_stage >= 2:
+			_crow.set_down(_crow_stage >= 3)
+		if _crow_stage == 3 and _gate:
+			_gate.ring_stone.prompt = "[E] Set the third marble in the ring"
+			_gate.ring_stone.make_ready()
+		elif _crow_stage >= 4 and _gate:
+			_gate.set_lit(3)
+	if _gate_stage >= 3 and _crow_stage < 0:
+		get_tree().create_timer(60.0).timeout.connect(_start_crow)
 	_food_at_start = s.food_at_start
 	_cooking_hinted = s.cooking_hinted
 	var right := Basis(Vector3.UP, player._yaw) * Vector3.RIGHT
@@ -583,6 +597,7 @@ func _update_story(delta: float) -> void:
 	_update_isle()
 	_update_hill(delta)
 	_update_gate()
+	_update_crow(delta)
 	var dist :=Vector2(p.global_position.x, p.global_position.z).length()
 	if not _sanctum_found:
 		if dist < 22.0 and not Game.quest("hum").is_empty():
@@ -1157,6 +1172,9 @@ func _on_gate_page_read() -> void:
 
 
 func _on_marble_held_up() -> void:
+	if _crow_stage == 3:
+		_on_third_marble_placed()
+		return
 	_gate_stage = 3
 	Game.player.frozen = true
 	Audio.play("level_up", null, -6.0, 0.8)
@@ -1175,6 +1193,137 @@ func _on_marble_held_up() -> void:
 			_otter.say(["They're singing TOGETHER!", "Two is a start! That's what the page said!"]))
 		get_tree().create_timer(13.0).timeout.connect(func():
 			_fox.say(["Three more marbles. Somewhere out there.", "...I'm going to need SO many snacks."]))
+	get_tree().create_timer(20.0).timeout.connect(_autosave)
+	get_tree().create_timer(75.0).timeout.connect(_start_crow)
+
+
+# --- The crows' nest -------------------------------------------------------------
+# With two marbles singing in the ring, the hero's marble hums toward a third:
+# a crow carried it off to an enormous nest at the top of a tall dead tree. A
+# full, well-timed sling shot knocks the nest down; the marble is among the
+# shiny things inside, and the ring takes it: three of five.
+
+var _crow: CrowTree
+## -1 not yet, 0 following the hum, 1 at the tree, 2 nest knocked down,
+## 3 marble found (bring it to the ring), 4 three of five.
+var _crow_stage := -1
+var _crow_hum := 2.0
+
+
+func _build_crow_tree() -> void:
+	var avoid: Array = [Vector3.ZERO]
+	if Game.story_start:
+		avoid.append(Game.wake_point)
+	for place in [_lake, _hill]:
+		if place:
+			avoid.append(place.global_position)
+	if _gate:
+		avoid.append(_gate.stair_foot)
+	var at := CrowTree.find_spot(avoid)
+	if at == Vector3.INF:
+		push_warning("No open spot for the crows' tree")
+		return
+	_crow = CrowTree.build(self, at)
+	_crow.knocked_down.connect(_on_nest_knocked_down)
+	_crow.searched.connect(_on_nest_searched)
+
+
+func _start_crow() -> void:
+	if _crow_stage >= 0 or _crow == null or _otter == null:
+		return
+	_crow_stage = 0
+	_crow.armed = true
+	Audio.play("ui_notify", null, -6.0, 1.9)
+	_otter.say(["Your marble's humming again!", "It's a funny hum, though. Kind of... squawky?"])
+	get_tree().create_timer(7.0).timeout.connect(func():
+		_fox.say(["Squawky.", "...Great. I love it when marbles squawk."]))
+	_add_family_step("Follow the squawky hum (it chimes when you face the right way)")
+
+
+func _update_crow(delta: float) -> void:
+	if _crow == null or _crow_stage != 0:
+		return
+	var p := Game.player
+	var to := _crow.global_position - p.global_position
+	to.y = 0.0
+	if to.length() < 22.0:
+		_crow_stage = 1
+		Game.notify("A tall dead tree... and something glints in a huge nest at the top.", Color(0.85, 0.9, 1.0))
+		_finish_family_step("Follow the squawky hum", "Follow the squawky hum")
+		_add_family_step("Knock the nest down with your sling (a full pull, let go right on time)")
+		if _otter and _fox:
+			_otter.say(["Up there! In the giant nest! It's a MARBLE!", "A crow took a marble! That's stealing!"])
+			get_tree().create_timer(7.0).timeout.connect(func():
+				_fox.say(["Crows love shiny things.", "Honestly? I respect it."]))
+			get_tree().create_timer(14.0).timeout.connect(func():
+				if _crow_stage == 1:
+					_otter.say(["Your sling could reach it!", "Pull ALL the way back and let go at just the right moment!"]))
+		return
+	_crow_hum -= delta
+	if _crow_hum <= 0.0:
+		_crow_hum = 2.4
+		var look := -p.camera.global_transform.basis.z
+		look.y = 0.0
+		if look.normalized().dot(to.normalized()) > 0.9:
+			Audio.play("ui_notify", null, lerpf(-4.0, -14.0, clampf(to.length() / 120.0, 0.0, 1.0)), 1.6)
+
+
+func _on_nest_knocked_down() -> void:
+	if _crow_stage < 1:
+		_finish_family_step("Follow the squawky hum", "Follow the squawky hum")
+	_crow_stage = 2
+	Game.practice("Aim", 3.0)
+	_finish_family_step("Knock the nest down", "Knock the crows' nest down with your sling")
+	_add_family_step("Look through the fallen nest (E)")
+	Game.notify("Down it comes!", Color(1.0, 0.9, 0.6))
+	if _otter and _fox:
+		get_tree().create_timer(1.5).timeout.connect(func():
+			_otter.say(["TIMBERRR!", "...Sorry, crows! We just need the marble back!"]))
+		get_tree().create_timer(7.0).timeout.connect(func():
+			_fox.say(["Nice shot.", "Don't let it go to your head. There's no room up there."]))
+	get_tree().create_timer(10.0).timeout.connect(_autosave)
+
+
+func _on_nest_searched() -> void:
+	_crow_stage = 3
+	Game.backpack.append("A third marble (from the crows' nest)")
+	Game.add_item("Feathers", 3)
+	Audio.play("level_up", null, -12.0, 1.1)
+	_finish_family_step("Look through the fallen nest", "Find the marble in the crows' nest")
+	_hud.think([
+		"A marble... and it's humming, just like mine.",
+		"Two buttons, a bottle cap and a VERY shiny spoon, too. Busy crows.",
+	], 3.6)
+	_add_family_step("Bring the marble to the stone ring in the mountains")
+	_gate.ring_stone.prompt = "[E] Set the third marble in the ring"
+	_gate.ring_stone.make_ready()
+	if _otter and _fox:
+		get_tree().create_timer(8.0).timeout.connect(func():
+			_fox.say(["Dibs on the spoon.", "I've always wanted a spoon."]))
+		get_tree().create_timer(14.0).timeout.connect(func():
+			_otter.say(["Maybe the crow was just keeping it safe for us!", "Let's take it to the ring! It's gonna sing SO loud!"]))
+	get_tree().create_timer(12.0).timeout.connect(_autosave)
+
+
+func _on_third_marble_placed() -> void:
+	_crow_stage = 4
+	Game.backpack.erase("A third marble (from the crows' nest)")
+	Game.player.frozen = true
+	Audio.play("level_up", null, -6.0, 0.9)
+	create_tween().tween_property(Audio, "dim", 0.3, 1.0)
+	get_tree().create_timer(1.5).timeout.connect(func():
+		_gate.set_lit(3, true)
+		Game.notify("A third song joins the ring. Three of the five sockets glow.", Color(1.0, 0.9, 0.6)))
+	get_tree().create_timer(4.0).timeout.connect(func():
+		Game.player.frozen = false
+		create_tween().tween_property(Audio, "dim", 1.0, 3.0)
+		_finish_family_step("Bring the marble to the stone ring", "Set the third marble in the ring")
+		_finish_family_step("A clue: the ring", "A clue: the ring needs five marbles (3 of 5)"))
+	if _otter and _fox:
+		get_tree().create_timer(6.0).timeout.connect(func():
+			_otter.say(["THREE! It's like a song with three parts now!", "Only two more to go!"]))
+		get_tree().create_timer(13.0).timeout.connect(func():
+			_fox.say(["Two more marbles.", "...And not one of them better be in a nest."]))
 	get_tree().create_timer(20.0).timeout.connect(_autosave)
 
 
@@ -2464,6 +2613,9 @@ func _take_screenshot() -> void:
 	if Game.shot_gate:
 		_test_gate()
 		return
+	if Game.shot_crow:
+		_test_crow()
+		return
 	if Game.shot_hill:
 		_test_hill()
 		return
@@ -3648,6 +3800,116 @@ func _test_hill() -> void:
 	print("running: speed %.2f (story run %.1f), Running xp %.2f" % [Vector2(pl.velocity.x, pl.velocity.z).length(), Player.STORY_RUN_SPEED, Game.skills.get("Running", 0.0)])
 	Input.action_release("sprint")
 	Input.action_release("move_forward")
+	get_tree().quit()
+
+
+## --shot-crow: the crows' nest chapter end to end: follow the hum to the tree,
+## a weak sling shot (wobble), a full one (down it comes), search the nest,
+## then set the third marble in the ring.
+func _test_crow() -> void:
+	var pl := Game.player
+	pl._end_wake()
+	var base := Game.screenshot_path.get_basename()
+	var shot := func(tag: String):
+		get_viewport().get_texture().get_image().save_png("%s_%s.png" % [base, tag])
+	var look := func(at: Vector3, pitch: float):
+		var d := at - pl.global_position
+		pl._yaw = atan2(-d.x, -d.z)
+		pl._pitch = pitch
+	var put := func(at: Vector3):
+		pl.global_position = Vector3(at.x, Game.ground_at(at.x, at.z) + 0.3, at.z)
+		pl.velocity = Vector3.ZERO
+		for c in [_fox, _otter]:
+			c.body.position = pl.global_position + Vector3(randf_range(-2, 2), 0, randf_range(-2, 2))
+			c.body.position.y = Game.ground_at(c.body.position.x, c.body.position.z)
+	await get_tree().create_timer(30.0).timeout
+	for c in [_fox, _otter]:
+		if c._zzz:
+			c._zzz.queue_free()
+		c.body.rotation.z = 0.0
+		c.follow()
+		c._forage_timer = 999.0
+	_make_dawn()
+	print("crow tree at %s (%.0f m from the Sanctum)" % [_crow.global_position.snapped(Vector3.ONE * 0.1), Vector2(_crow.global_position.x, _crow.global_position.z).length()])
+	Game.start_quest("family", "Finding Home", ["Touch the heartstone", "Find out what happened to your family"])
+	Game.set_step("family", 0, "Touch the heartstone", true)
+	_home_step = HOME_STEPS.size()
+	_lake_stage = 3
+	_isle_stage = 2
+	_hill_stage = 3
+	_hill.page.queue_free()
+	_gate_stage = 3
+	_gate.page.queue_free()
+	_gate.set_lit(2)
+	_add_family_step("A clue: the ring needs five marbles (2 of 5)")
+	_finish_family_step("A clue: the ring", "A clue: the ring needs five marbles (2 of 5)")
+	_show_far_light()
+	_start_crow()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	pl.equip(WeaponData.generate(1, rng, 0.0, "Hand Cannon"))
+	# From a way off, the tree on the skyline.
+	var away := Vector3(_crow.global_position.x, 0, _crow.global_position.z).normalized()
+	put.call(_crow.global_position - away * 40.0)
+	look.call(_crow.global_position, 0.12)
+	await get_tree().create_timer(2.5).timeout
+	shot.call("far")
+	print("far: stage %d" % _crow_stage)
+	# Walk in close: the glint, and the pets notice.
+	put.call(_crow.global_position - away * 12.0)
+	look.call(_crow.global_position, 0.0)
+	await get_tree().create_timer(1.0).timeout
+	print("close: stage %d" % _crow_stage)
+	# Aim the camera straight at the nest.
+	var nest_at := _crow.nest.global_position + Vector3.UP * 0.2
+	for k in 40:
+		var fwd := -pl.camera.global_basis.z
+		var want := (nest_at - pl.camera.global_position).normalized()
+		var dyaw := angle_difference(atan2(-fwd.x, -fwd.z), atan2(-want.x, -want.z))
+		var dpitch := asin(clampf(want.y, -1, 1)) - asin(clampf(fwd.y, -1, 1))
+		pl._yaw += dyaw * 0.8
+		pl._pitch += dpitch * 0.8
+		await get_tree().process_frame
+	var fwd := -pl.camera.global_basis.z
+	print("aim error %.2f deg" % rad_to_deg(fwd.angle_to((nest_at - pl.camera.global_position).normalized())))
+	await get_tree().create_timer(0.5).timeout
+	shot.call("nest")
+	# A weak shot only wobbles it.
+	pl._shot_power = 0.6
+	pl._shot_wobble = 0.0
+	pl._fire_ray(pl._gun_socket.global_position)
+	await get_tree().create_timer(1.5).timeout
+	print("weak shot: down %s, stage %d" % [_crow.down, _crow_stage])
+	# A full, well-timed one brings it down.
+	pl._shot_power = 1.2
+	pl._shot_wobble = 0.0
+	pl._fire_ray(pl._gun_socket.global_position)
+	await get_tree().create_timer(0.6).timeout
+	shot.call("falling")
+	await get_tree().create_timer(2.5).timeout
+	print("full shot: down %s, stage %d, treasure %s" % [_crow.down, _crow_stage, _crow.treasure != null])
+	if _crow.treasure:
+		put.call(_crow.treasure.global_position - away * 2.5)
+		look.call(_crow.treasure.global_position, -0.25)
+		await get_tree().create_timer(1.0).timeout
+		shot.call("fallen")
+		_crow.treasure.use(pl)
+	await get_tree().create_timer(1.0).timeout
+	print("searched: stage %d, backpack %s, feathers %d, ring ready %s (%s)" % [_crow_stage, Game.backpack.has("A third marble (from the crows' nest)"), Game.inventory.get("Feathers", 0), _gate.ring_stone.ready_for_marble, _gate.ring_stone.use_prompt()])
+	# Up at the ring, set it in.
+	var ring := _gate.ring_center()
+	pl.global_position = _gate.to_global(Vector3(0.6, 0.3, 3.6))
+	pl.velocity = Vector3.ZERO
+	look.call(ring, 0.1)
+	pl.zoom = 3.5
+	await get_tree().create_timer(1.0).timeout
+	_gate.ring_stone.use(pl)
+	await get_tree().create_timer(6.0).timeout
+	shot.call("ring")
+	print("ring: stage %d, lit %d" % [_crow_stage, _gate.lit()])
+	var q := Game.quest("family")
+	for st in q.steps:
+		print("  step: %s %s" % ["[x]" if st.done else "[ ]", st.text])
 	get_tree().quit()
 
 
