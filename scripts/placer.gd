@@ -14,6 +14,7 @@ const SIZES := {
 	"hearth": {"distance": 2.8, "radius": 1.0, "fire_gap": 3.5},
 	"bedroll": {"distance": 2.0, "radius": 0.6, "fire_gap": 1.6, "shelter_gap": 1.0},
 	"chest": {"distance": 1.8, "radius": 0.5, "fire_gap": 1.4, "shelter_gap": 1.0},
+	"dream_catcher": {"distance": 1.5, "radius": 0.25, "fire_gap": 1.4, "shelter_gap": 0.6},
 	# Goes up over other things: only its four poles need clear ground.
 	"rain_cover": {"distance": 2.6, "radius": 1.35, "fire_gap": 0.0, "shelter_gap": 2.0, "poles": true},
 	# Pushed out onto the water: needs deep enough water under the whole hull.
@@ -52,6 +53,8 @@ func _ready() -> void:
 			_ghost = Bedroll.ghost(_blue)
 		"chest":
 			_ghost = StorageChest.ghost(_blue)
+		"dream_catcher":
+			_ghost = DreamCatcher.ghost(_blue)
 		"rain_cover":
 			_ghost = RainCover.ghost(_blue)
 		"raft":
@@ -112,7 +115,7 @@ func _fits(spot: Vector3) -> bool:
 		var a := TAU * k / 6.0
 		if absf(_surface(spot.x + cos(a) * radius, spot.z + sin(a) * radius) - spot.y) > 0.3:
 			return false
-	for group in ["torches", "usables"]:
+	for group in ["torches", "usables", "dream_catchers"]:
 		for n in get_tree().get_nodes_in_group(group):
 			if not n is Campfire and (n as Node3D).global_position.distance_to(spot) < radius + 0.7:
 				return false

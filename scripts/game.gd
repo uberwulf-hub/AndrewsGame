@@ -186,6 +186,11 @@ const KNOW_HOW := {
 	# The Otter's idea for getting out to the little house on the water.
 	"raft": {"name": "Raft", "needs": {"Driftwood": 4, "Vines": 3},
 		"about": "Driftwood logs lashed together with vines. Build it on the water by the shore, climb aboard (E) and paddle."},
+	# From a bird brought down with the sling: the Otter's ideas, one at a time.
+	"dream_catcher": {"name": "Dream catcher", "needs": {"Sticks": 2, "Vines": 1, "Feathers": 3, "Small bones": 2},
+		"about": "A stick bent into a hoop, a vine web, bone beads and feathers. Put it up by your bedroll: the good dreams stay longer (well rested lasts twice as long)."},
+	"bone_whistle": {"name": "Bone whistle", "needs": {"Small bones": 1}, "carried": true,
+		"about": "A hollow little bone with a hole nibbled in it. Press T to whistle: the Fox and the Otter drop what they're doing and come running."},
 	# Not built: made and carried (Make, in Know-how).
 	"map": {"name": "Map", "needs": {"Charcoal": 1, "Birch bark": 2}, "carried": true,
 		"about": "Charcoal from the fire, drawn on birch bark. Shows everywhere you've been. M to look at it."},
@@ -351,6 +356,9 @@ var shot_isle := false
 var shot_hill := false
 var shot_gate := false
 var shot_crow := false
+var shot_feathers := false
+var soak_seconds := 0.0
+var geo_report := false
 var shot_sling := false
 var shot_hero := false
 var shot_bloom := false
@@ -471,6 +479,7 @@ func _setup_input() -> void:
 	_bind_key("swim_down", KEY_CTRL)
 	_bind_key("interact", KEY_E)
 	_bind_key("map", KEY_M)
+	_bind_key("whistle", KEY_T)
 	_bind_key("character", KEY_TAB)
 	_bind_key("pause", KEY_ESCAPE)
 	_bind_key("volume_down", KEY_MINUS)
@@ -561,6 +570,14 @@ func _parse_args() -> void:
 				story_start = true
 			"--shot-crow":
 				shot_crow = true
+				story_start = true
+			"--geo-report":
+				geo_report = true
+			"--soak":
+				soak_seconds = value.to_float()
+				story_start = true
+			"--shot-feathers":
+				shot_feathers = true
 				story_start = true
 			"--shot-hill":
 				shot_hill = true

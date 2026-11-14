@@ -47,7 +47,7 @@ static func write(tree: SceneTree, story: Dictionary) -> bool:
 	var built := []
 	for c in tree.get_nodes_in_group("campfires"):
 		built.append(["hearth" if c is Hearth else "campfire", (c as Node3D).global_position, (c as Node3D).rotation.y])
-	for group in [["bedrolls", "bedroll"], ["chests", "chest"], ["rain_covers", "rain_cover"], ["rafts", "raft"]]:
+	for group in [["bedrolls", "bedroll"], ["chests", "chest"], ["dream_catchers", "dream_catcher"], ["rain_covers", "rain_cover"], ["rafts", "raft"]]:
 		for n in tree.get_nodes_in_group(group[0]):
 			built.append([group[1], (n as Node3D).global_position, (n as Node3D).rotation.y])
 	for s in tree.get_nodes_in_group("shelters"):
@@ -155,6 +155,8 @@ static func restore_built(data: Dictionary, parent: Node) -> void:
 				Bedroll.build(parent, at, b[2])
 			"chest":
 				StorageChest.build(parent, at, b[2])
+			"dream_catcher":
+				DreamCatcher.build(parent, at, b[2])
 			"rain_cover":
 				RainCover.build(parent, at, b[2])
 			"raft":

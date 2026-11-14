@@ -2616,6 +2616,15 @@ func _take_screenshot() -> void:
 	if Game.shot_crow:
 		_test_crow()
 		return
+	if Game.shot_feathers:
+		_test_feathers()
+		return
+	if Game.geo_report:
+		_geo_report()
+		return
+	if Game.soak_seconds > 0.0:
+		_test_soak(Game.soak_seconds)
+		return
 	if Game.shot_hill:
 		_test_hill()
 		return
@@ -4140,4 +4149,204 @@ func _test_sling() -> void:
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("%s_otter_rest.png" % base)
 	print("otter resting: swimming %s, roll %.2f (on his side ~1.35, on his back ~3.14)" % [_otter.body.swimming, _otter.body._body.rotation.z])
+	get_tree().quit()
+
+
+## Test hook (--shot-feathers): two birds' worth of feathers and bones give the
+## Otter two ideas, one at a time; a dream catcher by the bedroll doubles the
+## nap, and the bone whistle calls both pets back (one mid-forage).
+func _test_feathers() -> void:
+	var pl := Game.player
+	pl._end_wake()
+	var base := Game.screenshot_path.get_basename()
+	await get_tree().create_timer(30.0).timeout
+	for c in [_fox, _otter]:
+		if c._zzz:
+			c._zzz.queue_free()
+		c.body.rotation.z = 0.0
+		c.follow()
+		c._forage_timer = 999.0
+	_make_dawn()
+	_home_step = HOME_STEPS.size()
+	Game.open_sparks()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 3
+	var bird := func() -> void:
+		var at := pl.global_position + Vector3(1.0, 0, 0)
+		var g := Gatherable.spawn(self, at, "bird", rng)
+		print("  gathered: %s" % g.gather(rng))
+		g.queue_free()
+	await bird.call()
+	await get_tree().create_timer(0.5).timeout
+	print("after bird 1: sparks %s" % [Game.sparks])
+	await bird.call()
+	print("after bird 2 (before asking): sparks %s" % [Game.sparks])
+	_otter._teach_spark()
+	await get_tree().create_timer(12.0).timeout
+	print("taught: known dream_catcher %s, sparks %s" % [Game.known.has("dream_catcher"), Game.sparks])
+	await bird.call()
+	print("after bird 3: sparks %s" % [Game.sparks])
+	_otter._teach_spark()
+	await get_tree().create_timer(12.0).timeout
+	print("taught: known bone_whistle %s, feathers %d, bones %d" % [Game.known.has("bone_whistle"), Game.inventory.get("Feathers", 0), Game.inventory.get("Small bones", 0)])
+	for item in ["Sticks", "Vines", "Ferns"]:
+		Game.add_item(item, 20)
+	Game.add_item("Small bones", 3)
+	# The bedroll on the Sanctum floor, then the dream catcher placed beside it.
+	Game.learn("bedroll")
+	pl.global_position = Vector3(-3.0, 3.0, 8.0)
+	pl._yaw = 0.0
+	pl._pitch = -0.3
+	await get_tree().create_timer(0.8).timeout
+	pl.begin_placing("bedroll")
+	await get_tree().create_timer(0.3).timeout
+	print("bedroll preview valid %s" % pl._placer.valid)
+	pl._build("bedroll", pl._placer.global_position, pl._placer.rotation.y)
+	pl.cancel_placing()
+	var bed := get_tree().get_first_node_in_group("bedrolls") as Bedroll
+	pl.global_position = bed.global_position + Vector3(1.8, 1.0, 1.0)
+	pl._yaw = 0.0
+	pl._pitch = -0.3
+	await get_tree().create_timer(0.8).timeout
+	var ok := pl.begin_placing("dream_catcher")
+	await get_tree().create_timer(0.3).timeout
+	print("dream catcher preview: ok %s valid %s, %.1f m from the bedroll" % [ok, pl._placer.valid, pl._placer.global_position.distance_to(bed.global_position)])
+	get_viewport().get_texture().get_image().save_png("%s_ghost.png" % base)
+	pl._build("dream_catcher", pl._placer.global_position, pl._placer.rotation.y)
+	pl.cancel_placing()
+	var dc := get_tree().get_first_node_in_group("dream_catchers") as DreamCatcher
+	print("built: %s, sticks left %d, feathers left %d" % [dc != null, Game.inventory.get("Sticks", 0), Game.inventory.get("Feathers", 0)])
+	# A close look at it.
+	pl.global_position = dc.global_position + dc.global_transform.basis.z * 2.2 + Vector3(0.4, 0.3, 0)
+	var d := dc.global_position - pl.global_position
+	pl._yaw = atan2(-d.x, -d.z)
+	pl._pitch = -0.05
+	await get_tree().create_timer(1.2).timeout
+	get_viewport().get_texture().get_image().save_png("%s_catcher.png" % base)
+	bed.use(pl)
+	await get_tree().create_timer(5.5).timeout
+	print("after nap by the dream catcher: rested %.0f s (normal %.0f)" % [Game.rested, Game.RESTED_TIME])
+	# The whistle.
+	pl.whistle()
+	print("whistle before making it: otter state %s" % _otter.state)
+	pl.make("bone_whistle")
+	print("made: backpack %s" % [Game.backpack])
+	# Off on a run to the water (sent straight off, without waiting for a find).
+	_otter.state = Companion.State.FORAGING
+	_otter._run = Companion.Run.GOING
+	_otter._run_time = 0.0
+	_otter._run_spot = pl.global_position + Vector3(-25.0, 0, 10.0)
+	_otter._find = ["fish", 1.0, "A fish!"]
+	_fox.body.position = pl.global_position + Vector3(10.0, 0, 3.0)
+	_fox.body.position.y = Game.ground_at(_fox.body.position.x, _fox.body.position.z)
+	_fox._idle_time = 10.0
+	await get_tree().create_timer(1.2).timeout
+	var fox_before := _fox.body.global_position.distance_to(pl.global_position)
+	print("before whistle: otter state %s run %s, fox %.1f m away" % [_otter.state, _otter._run, fox_before])
+	pl.whistle()
+	print("  whistled: otter run %s, fox called %.1f" % [_otter._run, _fox._called])
+	await get_tree().create_timer(4.0).timeout
+	print("after whistle: otter state %s %.1f m away, fox %.1f m away" % [_otter.state, _otter.body.global_position.distance_to(pl.global_position), _fox.body.global_position.distance_to(pl.global_position)])
+	get_viewport().get_texture().get_image().save_png("%s_whistle.png" % base)
+	get_tree().quit()
+
+
+## Test hook (--soak=SECONDS): the opening as played: wake, build the fire at
+## night, then keep walking and gathering, logging memory, video memory, nodes
+## and draw calls every 10 s. Quits itself if anything balloons, so a runaway
+## can never take the graphics driver down with it.
+func _test_soak(seconds: float) -> void:
+	var pl := Game.player
+	var log := func(tag: String):
+		print("[%s] t=%4.0fs fps %3d | mem %5.0f MB | vram %5.0f MB | tex %4.0f MB | buf %4.0f MB | objects %6d | nodes %5d | orphans %4d | draws %4d | prims %7d | lights %s" % [tag,
+			Time.get_ticks_msec() / 1000.0, Performance.get_monitor(Performance.TIME_FPS),
+			Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0,
+			Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0,
+			Performance.get_monitor(Performance.RENDER_TEXTURE_MEM_USED) / 1048576.0,
+			Performance.get_monitor(Performance.RENDER_BUFFER_MEM_USED) / 1048576.0,
+			Performance.get_monitor(Performance.OBJECT_COUNT), Performance.get_monitor(Performance.OBJECT_NODE_COUNT),
+			Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT),
+			Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME),
+			Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME),
+			get_tree().get_nodes_in_group("campfires").size()])
+	log.call("start")
+	await get_tree().create_timer(10.0).timeout
+	log.call("woke")
+	await get_tree().create_timer(30.0).timeout
+	log.call("talked")
+	Game.add_item("Sticks", 5)
+	Game.add_item("Stones", 3)
+	Game.learn("campfire")
+	pl._build("campfire", pl.global_position + Vector3(0, 0, -2.4), 0.0)
+	log.call("fire")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	var t0 := Time.get_ticks_msec()
+	var next_log := 10.0
+	while (Time.get_ticks_msec() - t0) / 1000.0 < seconds:
+		# Wander toward something to pick up, as the player would.
+		var best: Node3D = null
+		var best_d := 1e9
+		for g in get_tree().get_nodes_in_group("gatherables"):
+			var d: float = (g as Node3D).global_position.distance_to(pl.global_position)
+			if d < best_d and d > 0.5 and (g as Gatherable).available:
+				best_d = d
+				best = g
+		if best and best_d < 60.0:
+			var to := best.global_position - pl.global_position
+			pl._yaw = atan2(-to.x, -to.z)
+			for k in 20:  # walk there for a bit
+				var step := best.global_position - pl.global_position
+				step.y = 0.0
+				if step.length() < 1.2:
+					break
+				pl.global_position += step.normalized() * minf(5.0 * 0.1, step.length())
+				pl.global_position.y = Game.ground_at(pl.global_position.x, pl.global_position.z) + 0.1
+				await get_tree().create_timer(0.1).timeout
+			if is_instance_valid(best) and best.global_position.distance_to(pl.global_position) < 2.0:
+				(best as Gatherable).gather(rng)
+		else:
+			pl.global_position += Vector3(rng.randf_range(-8, 8), 0, rng.randf_range(-8, 8))
+			pl.global_position.y = Game.ground_at(pl.global_position.x, pl.global_position.z) + 0.1
+		await get_tree().create_timer(0.5).timeout
+		var el := (Time.get_ticks_msec() - t0) / 1000.0
+		if el >= next_log:
+			next_log += 10.0
+			log.call("play")
+		if Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) > 4.0e9 or Performance.get_monitor(Performance.OBJECT_NODE_COUNT) > 60000 or Performance.get_monitor(Performance.MEMORY_STATIC) > 3.0e9:
+			log.call("RUNAWAY")
+			break
+	log.call("end")
+	get_tree().quit()
+
+
+## Test hook (--geo-report): what draws the most triangles, biggest first.
+func _geo_report() -> void:
+	await get_tree().create_timer(3.0).timeout
+	var rows := []
+	for n in find_children("*", "GeometryInstance3D", true, false):
+		var gi := n as GeometryInstance3D
+		var tris := 0
+		var count := 1
+		var mesh: Mesh = null
+		if gi is MultiMeshInstance3D and (gi as MultiMeshInstance3D).multimesh:
+			var mm := (gi as MultiMeshInstance3D).multimesh
+			mesh = mm.mesh
+			count = mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count
+		elif gi is MeshInstance3D:
+			mesh = (gi as MeshInstance3D).mesh
+		if mesh == null:
+			continue
+		for s in mesh.get_surface_count():
+			var arr := mesh.surface_get_arrays(s)
+			var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX] if arr[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+			tris += (idx.size() if idx.size() > 0 else (arr[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()) / 3
+		rows.append([tris * count, str(gi.get_path()).right(70), tris, count, gi.cast_shadow, gi.visibility_range_end])
+	rows.sort_custom(func(a, b): return a[0] > b[0])
+	var total := 0
+	for r in rows:
+		total += r[0]
+	print("total triangles in the scene: %d across %d geometry nodes" % [total, rows.size()])
+	for r in rows.slice(0, 25):
+		print("%9d  (%6d tris x %4d)  shadow %d  range_end %5.0f  %s" % [r[0], r[2], r[3], r[4], r[5], r[1]])
 	get_tree().quit()

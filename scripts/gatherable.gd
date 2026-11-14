@@ -25,7 +25,10 @@ const KINDS := {
 	"clams": {"item": "Clams", "count": [2, 4], "skill": "Foraging", "verb": "Take the clams"},
 	# A bird brought down with the sling: feathers, and a little meat and bone.
 	"bird": {"item": "Feathers", "count": [2, 4], "skill": "Survival", "verb": "Gather feathers, meat and bones",
-		"extra": [["Bird meat", 1, 1], ["Small bones", 1, 2]]},
+		"extra": [["Bird meat", 1, 1], ["Small bones", 1, 2]],
+		# Gives the Otter an idea, then (once that's learned) another one.
+		"sparks": ["dream_catcher", "bone_whistle"],
+		"spark_thought": ["Feathers... and some tiny bones.", "...I bet the Otter would have an idea for these."]},
 	# Not picked up: looking at it teaches something.
 	"fire_ring": {"verb": "Look at the old fire ring", "teaches": "campfire", "skill": "Survival",
 		"thought": ["Someone made a fire here, a long time ago...", "Sticks in the middle, stones in a ring around them. I could do that."]},
@@ -78,7 +81,11 @@ func gather(rng: RandomNumberGenerator) -> String:
 		Game.add_item(extra[0], n)
 		got += ", +%d %s" % [n, extra[0]]
 	if info.has("sparks"):
-		Game.spark(info.sparks, info.spark_thought)
+		var ideas: Array = info.sparks if info.sparks is Array else [info.sparks]
+		for id in ideas:
+			if not Game.known.has(id):
+				Game.spark(id, info.spark_thought)  # one at a time: nothing if it's already waiting
+				break
 	if Game.FOODS.has(info.item):
 		Game.food_found += count
 	Game.practice(info.skill, 2.0)

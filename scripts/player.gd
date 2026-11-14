@@ -546,6 +546,8 @@ func _physics_process(delta: float) -> void:
 		_nova()
 	if Input.is_action_just_pressed("reload"):
 		_start_reload()
+	if Input.is_action_just_pressed("whistle"):
+		whistle()
 	if Input.is_action_just_pressed("interact") and cooking == "":
 		_interact()
 	if _placer:
@@ -1511,6 +1513,21 @@ func _can_afford(id: String) -> bool:
 	return true
 
 
+## A toot on the bone whistle (once you've made one): the Fox and the Otter
+## drop what they're doing and come running.
+var _next_whistle := 0
+
+
+func whistle() -> void:
+	if not Game.backpack.has(Game.KNOW_HOW.bone_whistle.name) or Time.get_ticks_msec() < _next_whistle:
+		return
+	_next_whistle = Time.get_ticks_msec() + 1500
+	Babble.whistle(self)
+	for comp in get_tree().get_nodes_in_group("companions"):
+		(comp as Companion).whistled()
+	Game.practice("Survival", 0.2)
+
+
 ## Makes something you carry (the map) from what's in your pockets.
 func make(id: String) -> void:
 	var entry: Dictionary = Game.KNOW_HOW[id]
@@ -1524,6 +1541,8 @@ func make(id: String) -> void:
 	Audio.play("gear_rustle", null, -4.0, 0.7)
 	if id == "map":
 		says.emit(["Charcoal on bark... there. Everywhere we've been so far.", "(Press M to look at the map.)"])
+	elif id == "bone_whistle":
+		says.emit(["A little bone whistle. Let's see if it works.", "(Press T to whistle for the Fox and the Otter.)"])
 
 
 func _build(id: String, spot: Vector3, yaw: float) -> void:
@@ -1552,6 +1571,9 @@ func _build(id: String, spot: Vector3, yaw: float) -> void:
 		"chest":
 			StorageChest.build(get_parent(), spot, yaw)
 			Game.practice("Woodcraft", 6.0)
+		"dream_catcher":
+			DreamCatcher.build(get_parent(), spot, yaw)
+			Game.practice("Survival", 4.0)
 		"rain_cover":
 			RainCover.build(get_parent(), spot, yaw)
 			Game.practice("Woodcraft", 8.0)

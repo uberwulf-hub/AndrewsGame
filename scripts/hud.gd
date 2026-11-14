@@ -11,6 +11,7 @@ const CONTROLS := [
 	["R", "Refill"], ["Q", "Bloom (with a dream tool)"],
 	["E", "Use what the dot points at (pick up, talk, drink)"],
 	["Tab", "Character, backpack, know-how & journal"],
+	["M", "Map (once you've drawn one)"], ["T", "Whistle for the Fox and the Otter (once you have a whistle)"],
 	["Swimming", "Look to steer, Space to rise, C to dive"],
 	["Esc", "Pause"], ["F11", "Fullscreen"], ["- / =", "Volume"],
 ]

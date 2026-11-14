@@ -67,8 +67,9 @@ func use(player: Player) -> void:
 	var tw := create_tween()
 	tw.tween_property(dark, "color:a", 1.0, 1.4)
 	tw.tween_interval(1.6)
+	var dreamy := DreamCatcher.near(get_tree(), global_position)
 	tw.tween_callback(func():
-		Game.rested = Game.RESTED_TIME
+		Game.rested = Game.RESTED_TIME * (2.0 if dreamy else 1.0)
 		Game.warmth = minf(100.0, Game.warmth + 25.0)
 		player.heal(player.max_health * 0.5)
 		Game.practice("Survival", 1.0))
@@ -76,5 +77,11 @@ func use(player: Player) -> void:
 	tw.tween_callback(func():
 		player.frozen = false
 		layer.queue_free()
-		Game.notify("You wake up well rested. Skills grow faster for a while.", Color(1.0, 0.9, 0.6))
+		if dreamy:
+			Game.notify("Such good dreams... You wake up well rested, and it'll last twice as long.", Color(1.0, 0.9, 0.6))
+			for d in get_tree().get_nodes_in_group("dream_catchers"):
+				if (d as Node3D).global_position.distance_to(global_position) < DreamCatcher.REACH:
+					(d as DreamCatcher).flick()
+		else:
+			Game.notify("You wake up well rested. Skills grow faster for a while.", Color(1.0, 0.9, 0.6))
 		Game.built.emit("sleep", global_position))

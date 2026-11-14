@@ -132,6 +132,8 @@ const OTTER_FEELINGS := [
 var _tips_given := 0
 var _feelings := 0
 var _since_run := 999.0
+## Seconds left of running over after the bone whistle (he comes right up close).
+var _called := 0.0
 
 
 func _ready() -> void:
@@ -188,6 +190,7 @@ func _process(delta: float) -> void:
 		body.lounging = false
 	_update_hop(delta)
 	_since_run += delta
+	_called = maxf(0.0, _called - delta)
 	_update_needs(delta)
 	if _shove.length_squared() > 0.01:
 		body.position += _shove * delta
@@ -228,14 +231,14 @@ func _process(delta: float) -> void:
 	_idle_time = 0.0 if player_moving else _idle_time + delta
 	var goal := body.position
 	var speed := 0.0
-	if dist > follow_distance + 1.5:
+	if dist > follow_distance + 1.5 or (_called > 0.0 and dist > 1.8):
 		# Catch up to a spot beside and a bit behind the hero.
 		body.lounging = false
 		_wander_timer = 0.0  # a fresh spot next time he stops
 		var back := -to_player.normalized()
 		var beside := Vector3(-back.z, 0, back.x) * side
-		goal = player.global_position + (back * 0.8 + beside * 0.6).normalized() * follow_distance
-		speed = 6.5 if dist > 9.0 else 3.4
+		goal = player.global_position + (back * 0.8 + beside * 0.6).normalized() * (1.4 if _called > 0.0 else follow_distance)
+		speed = 6.5 if dist > 9.0 or _called > 0.0 else 3.4
 	elif _idle_time > 4.0:
 		_antsy(delta, player)
 		goal = _wander_point
@@ -359,6 +362,12 @@ func _teach_lean_to() -> void:
 ## What the Otter says when you show him something new, and what the hero
 ## thinks once it clicks.
 const OTTER_LESSONS := {
+	"dream_catcher": [
+		["Feathers! And teeny bones! Okay, bend a stick round into a circle...", "...weave a vine across it like a spider web, hang the bones and feathers off the bottom...", "...and the bad dreams get stuck in the web, and the good ones slide down the feathers to you!"],
+		["A dream catcher, to put up by the bedroll.", "Good dreams that stay longer. ...I'll take all of those I can get."]],
+	"bone_whistle": [
+		["Ooh, a hollow one. Give it here. *nibble nibble*", "A little hole right... there. Now blow. FWEEEE!", "Now when you whistle, we come running. Probably. Unless there's fish."],
+		["A bone whistle. One toot and they come running.", "...Probably, he says."]],
 	"torch_post": [
 		["Vines! Okay okay okay. Take a stick, wrap birch bark around the top...", "...tie it on tight with a vine, and LIGHT it!", "A torch! Stick it in the ground. BOOM. Night light."],
 		["A torch post. Stick, bark, vine.", "He comes up with this stuff so fast."]],
@@ -377,6 +386,36 @@ func _teach_spark() -> void:
 	say(lesson[0])
 	get_tree().create_timer(3.6 * lesson[0].size()).timeout.connect(func():
 		Game.learn(id, lesson[1], "Otter"))
+
+
+const WHISTLE_REPLIES := {
+	"fox": ["Coming, coming. Don't wear it out.", "You rang?", "I was RIGHT in the middle of something.", "Yes? I'm here. Obviously."],
+	"otter": ["FWEE! That's me!", "Here! Here! I'm here!", "Did you say snack? I heard snack.", "Zoom zoom zoom!"],
+}
+
+
+## The bone whistle: drop whatever he's doing and run over. False when he
+## can't (asleep, resting by the fire for the story, riding, helping you).
+func whistled() -> bool:
+	match state:
+		State.FOLLOWING:
+			body.lounging = false
+			_idle_time = 0.0
+			_wander_timer = 0.0
+		State.FORAGING:
+			body.rotation.x = 0.0
+			if _run == Run.GOING:
+				_find = []  # didn't get there: comes back empty-pawed
+			if _run == Run.SEARCHING and who == "otter":
+				Audio.play("splash_out", body.global_position, -4.0)
+			_run = Run.RETURNING
+			_run_time = 0.0
+		_:
+			return false
+	_called = 6.0
+	_hop_v = 3.0
+	say([WHISTLE_REPLIES[who].pick_random()])
+	return true
 
 
 ## Gets comfy by the fire (for the night passing) until follow() is called.

@@ -214,3 +214,53 @@ static func _step(c: Array, s: Array, x: float) -> float:
 	s[1] = s[0]
 	s[0] = y
 	return y
+
+
+# --- The bone whistle ----------------------------------------------------------
+# A breathy two-note "fwee-oo": up, then a little drop, with air in it.
+
+static var _whistle_wav: AudioStreamWAV
+
+
+## Plays the bone whistle from `owner` (the hero).
+static func whistle(owner: Node) -> void:
+	if _whistle_wav == null:
+		_whistle_wav = _make_whistle()
+	var p := AudioStreamPlayer.new()
+	p.stream = _whistle_wav
+	p.bus = "SFX"
+	p.volume_db = -14.0
+	p.pitch_scale = randf_range(0.97, 1.03)
+	owner.add_child(p)
+	p.play()
+	p.finished.connect(p.queue_free)
+
+
+static func _make_whistle() -> AudioStreamWAV:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 77
+	# [start Hz, end Hz, seconds]: a rising first note, a short gap, a falling second.
+	var notes := [[1900.0, 2500.0, 0.2], [0.0, 0.0, 0.05], [2450.0, 2050.0, 0.26]]
+	var samples := PackedFloat32Array()
+	var phase := 0.0
+	for note in notes:
+		var n := int(note[2] * RATE)
+		for i in n:
+			var u := float(i) / n
+			if note[0] == 0.0:
+				samples.append(0.0)
+				continue
+			var f: float = lerpf(note[0], note[1], u * u * (3.0 - 2.0 * u)) * (1.0 + 0.006 * sin(TAU * 6.0 * i / RATE))
+			phase = fmod(phase + f / RATE, 1.0)
+			var env := minf(u / 0.12, 1.0) * minf((1.0 - u) / 0.2, 1.0)
+			var air := rng.randf_range(-1.0, 1.0) * 0.12
+			samples.append((sin(TAU * phase) + sin(TAU * phase * 2.0) * 0.08 + air) * env)
+	var data := PackedByteArray()
+	data.resize(samples.size() * 2)
+	for i in samples.size():
+		data.encode_s16(i * 2, int(clampf(samples[i] * 0.8, -1.0, 1.0) * 32767.0))
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = RATE
+	wav.data = data
+	return wav
