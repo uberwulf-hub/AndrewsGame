@@ -378,13 +378,41 @@ func _ready() -> void:
 	detail_noise.frequency = 0.03
 	_setup_input()
 	_parse_args()
+	_apply_display()
+
+
+# --- Full screen ----------------------------------------------------------------
+# The game fills the screen with no title bar (Quit is on the title screen and
+# in the pause menu). F11 or Options switches to a window; the choice is kept.
+
+const SETTINGS_PATH := "user://settings.cfg"
+
+
+func _apply_display() -> void:
+	if screenshot_mode:
+		return  # test captures stay in their small window off-screen
+	var cfg := ConfigFile.new()
+	cfg.load(SETTINGS_PATH)
+	if cfg.get_value("display", "fullscreen", true):
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+
+
+func is_fullscreen() -> bool:
+	return DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
+
+
+func set_fullscreen(on: bool) -> void:
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if on else DisplayServer.WINDOW_MODE_WINDOWED)
+	var cfg := ConfigFile.new()
+	cfg.load(SETTINGS_PATH)
+	cfg.set_value("display", "fullscreen", on)
+	cfg.save(SETTINGS_PATH)
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	var key := event as InputEventKey
 	if key and key.pressed and not key.echo and key.keycode == KEY_F11:
-		var fullscreen := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if fullscreen else DisplayServer.WINDOW_MODE_FULLSCREEN)
+		set_fullscreen(not is_fullscreen())
 
 
 func notify(text: String, color := Color.WHITE) -> void:

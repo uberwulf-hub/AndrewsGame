@@ -1875,6 +1875,22 @@ func _build_grass() -> void:
 
 # --- Landmarks ---------------------------------------------------------------
 
+## The Sanctum's two stone tiers, for the pets (see Companion._floor_height).
+class SanctumFloor extends Node3D:
+	func _ready() -> void:
+		add_to_group("floors")
+
+	## The top of the stone at a world point, or -INF off it. The slabs are
+	## many-sided, so their edges sit a little inside the full radius.
+	func floor_at(x: float, z: float) -> float:
+		var r := Vector2(x - global_position.x, z - global_position.z).length()
+		if r < 5.9:
+			return global_position.y + 1.05
+		if r < 10.75:
+			return global_position.y + 0.7
+		return -INF
+
+
 func _build_sanctum() -> void:
 	var body := StaticBody3D.new()
 	body.name = "Sanctum"
@@ -1889,6 +1905,7 @@ func _build_sanctum() -> void:
 	var deep_moss := MeshKit.mat(Color(0.22, 0.36, 0.16), 0.95)
 	_add_cylinder(body, 11.0, 11.5, 0.8, Vector3(0, 0.3, 0), worn, 14)
 	_add_cylinder(body, 6.0, 6.3, 0.4, Vector3(0, 0.85, 0), _stone_mats[1], 12)
+	body.add_child(SanctumFloor.new())  # so the pets stand on it, not in it
 	# Moss creeping over the floor.
 	for k in 14:
 		var a := rng.randf() * TAU
@@ -4347,6 +4364,11 @@ func _geo_report() -> void:
 	for r in rows:
 		total += r[0]
 	print("total triangles in the scene: %d across %d geometry nodes" % [total, rows.size()])
+	for spot in [Vector3(3, 0, 2), Vector3(8, 0, 3), Vector3(12, 0, 0)]:
+		print("sanctum spot %s: terrain %.2f, pet floor %.2f" % [spot, Game.ground_at(spot.x, spot.z), _fox._floor_height(spot.x, spot.z)])
+	for c in [_fox, _otter]:
+		var p: Vector3 = c.body.position
+		print("%s at y %.2f (terrain %.2f, floor %.2f, %.1f m from the middle)" % [c.who, p.y, Game.ground_at(p.x, p.z), c._floor_height(p.x, p.z), Vector2(p.x, p.z).length()])
 	for r in rows.slice(0, 25):
 		print("%9d  (%6d tris x %4d)  shadow %d  range_end %5.0f  %s" % [r[0], r[2], r[3], r[4], r[5], r[1]])
 	get_tree().quit()

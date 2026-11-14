@@ -11,6 +11,20 @@ var player: Player
 var _tab := "Backpack"
 var _left: VBoxContainer
 var _right: VBoxContainer
+## Where the open tab draws (inside a scroll box, so the panel keeps its size).
+var _body: VBoxContainer
+## Which sections are folded open, and the one thing whose details are showing.
+var _open := {}
+var _picked := ""
+
+## Know-how, grouped like a crafting book: things for camp, for the Sanctum
+## home, and things you make and carry. Anything new goes under "Other".
+const KNOW_HOW_SECTIONS := {
+	"Camp": ["campfire", "cooking", "lean_to", "torch_post", "rain_catcher", "raft"],
+	"Home": ["hearth", "bedroll", "chest", "rain_cover", "dream_catcher"],
+	"Carried": ["map", "bone_whistle"],
+}
+const BODY_HEIGHT := 480.0
 
 
 func _ready() -> void:
@@ -94,6 +108,14 @@ func refresh() -> void:
 			_tab = t
 			refresh())
 		tabs.add_child(b)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(440, BODY_HEIGHT)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_right.add_child(scroll)
+	_body = VBoxContainer.new()
+	_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body.add_theme_constant_override("separation", 6)
+	scroll.add_child(_body)
 	match _tab:
 		"Know-how":
 			_know_how()
@@ -101,77 +123,150 @@ func refresh() -> void:
 			_journal()
 		_:
 			_backpack()
-	_text(_right, "\nTab  close", Color(0.7, 0.68, 0.62))
+	_text(_right, "Tab  close", Color(0.7, 0.68, 0.62))
 
 
 func _backpack() -> void:
-	for item in Game.backpack:
-		if item == "Canteen":
-			_row(_right, "Canteen  (%d sips)" % Game.canteen_sips, "Drink", Game.canteen_sips > 0, func():
-				player.drink_canteen()
-				refresh())
-		else:
-			_text(_right, "•  " + item)
-	if Game.inventory.is_empty():
-		_text(_right, "Nothing gathered yet. Press E near sticks, stones and berries.", Color(0.7, 0.68, 0.62))
-	for item in Game.inventory:
-		var count: int = Game.inventory[item]
-		if Game.FOODS.has(item):
-			_row(_right, "%s  x%d" % [item, count], "Eat", true, func():
+	if Game.inventory.is_empty() and Game.backpack.is_empty():
+		_text(_body, "Nothing gathered yet. Press E near sticks, stones and berries.", Color(0.7, 0.68, 0.62))
+	if _section("Carried", str(Game.backpack.size())):
+		for item in Game.backpack:
+			if item == "Canteen":
+				_row(_body, "    Canteen  (%d sips)" % Game.canteen_sips, "Drink", Game.canteen_sips > 0, func():
+					player.drink_canteen()
+					refresh())
+			else:
+				_text(_body, "    " + item)
+	var food: Array = Game.inventory.keys().filter(func(i): return Game.FOODS.has(i))
+	var stuff: Array = Game.inventory.keys().filter(func(i): return not Game.FOODS.has(i))
+	if not food.is_empty() and _section("Food", str(food.size())):
+		for item in food:
+			_row(_body, "    %s  x%d" % [item, Game.inventory[item]], "Eat", true, func():
 				player.eat(item)
 				refresh())
-		else:
-			_text(_right, "%s  x%d" % [item, count])
+	if not stuff.is_empty() and _section("Materials", str(stuff.size())):
+		for item in stuff:
+			_text(_body, "    %s  x%d" % [item, Game.inventory[item]])
+
+
+## A fold-open section header (a click opens or closes it). True when open.
+## `note` goes after the name, and `ready` (if any) is said in gold.
+func _section(name: String, note := "", ready := 0) -> bool:
+	var open: bool = _open.get(_tab + "/" + name, false)
+	var b := Button.new()
+	b.flat = true
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.text = ("▾  " if open else "▸  ") + name + ("   (%s)" % note if note != "" else "") + ("   ★ %d ready" % ready if ready > 0 else "")
+	b.add_theme_font_size_override("font_size", 21)
+	b.add_theme_color_override("font_color", GOLD if ready > 0 else CREAM)
+	b.add_theme_color_override("font_hover_color", Color(1.0, 0.95, 0.75))
+	b.pressed.connect(func():
+		_open[_tab + "/" + name] = not open
+		refresh())
+	_body.add_child(b)
+	return open
 
 
 ## The dream journal: every active quest in full, who suggested it, and ideas
 ## that are waiting until there's room on the tracker.
 func _journal() -> void:
 	if Game.quests.is_empty():
-		_text(_right, "No quests right now. Explore, or listen to the Fox and the Otter.", Color(0.7, 0.68, 0.62))
+		_text(_body, "No quests right now. Explore, or listen to the Fox and the Otter.", Color(0.7, 0.68, 0.62))
 	for q in Game.quests:
 		var by: String = ("   (%s's idea)" % q.giver) if q.giver != "" else ""
-		_text(_right, ("Main: " if q.main else "Side: ") + q.title + by, GOLD if q.main else Color(0.75, 0.85, 1.0))
+		_text(_body, ("Main: " if q.main else "Side: ") + q.title + by, GOLD if q.main else Color(0.75, 0.85, 1.0))
 		for step in q.steps:
-			_text(_right, ("    ✓  " if step.done else "    •  ") + step.text, Color(0.6, 0.58, 0.54) if step.done else CREAM)
+			_text(_body, ("    ✓  " if step.done else "    •  ") + step.text, Color(0.6, 0.58, 0.54) if step.done else CREAM)
 	if not Game.ideas.is_empty():
-		_text(_right, "\nIdeas for later (one main quest and %d side quests at a time):" % Game.MAX_SIDE, Color(0.78, 0.75, 0.68))
+		_text(_body, "\nIdeas for later (one main quest and %d side quests at a time):" % Game.MAX_SIDE, Color(0.78, 0.75, 0.68))
 		for idea in Game.ideas:
-			_text(_right, "    ◇  " + idea, Color(0.78, 0.75, 0.68))
+			_text(_body, "    ◇  " + idea, Color(0.78, 0.75, 0.68))
 
 
-## What the hero has figured out how to make: what each needs, how much of
-## it you have, and a Build button. Undiscovered things stay hidden.
+## What the hero has figured out how to make, in fold-open sections. Each
+## line shows what it needs and how much you have; click a name to read about
+## it. Undiscovered things stay hidden.
 func _know_how() -> void:
 	if Game.known.is_empty():
-		_text(_right, "You haven't figured anything out yet.\nLook around. The world is full of ideas.", Color(0.7, 0.68, 0.62))
-	for id in Game.known:
-		var entry: Dictionary = Game.KNOW_HOW[id]
-		if entry.get("at_fire", false):
-			_text(_right, entry.name + "   (at a campfire)", CREAM)
-			_text(_right, "    " + entry.about, Color(0.78, 0.75, 0.68))
+		_text(_body, "You haven't figured anything out yet.\nLook around. The world is full of ideas.", Color(0.7, 0.68, 0.62))
+		return
+	var sections := KNOW_HOW_SECTIONS.duplicate(true)
+	sections["Other"] = Game.known.filter(func(id): return not KNOW_HOW_SECTIONS.values().any(func(l): return l.has(id)))
+	for name in sections:
+		var ids: Array = sections[name].filter(func(id): return Game.known.has(id))
+		if ids.is_empty():
 			continue
-		var needs: Dictionary = entry.needs
-		var craftable := true
-		var parts: Array[String] = []
-		for item in needs:
-			var have: int = Game.inventory.get(item, 0)
-			craftable = craftable and have >= needs[item]
-			parts.append("%s %d/%d" % [item, mini(have, needs[item]), needs[item]])
+		var ready := ids.filter(func(id): return _can_make(id)).size()
+		if not _section(name, str(ids.size()), ready):
+			continue
+		for id in ids:
+			_know_how_entry(id)
+	var unknown := Game.KNOW_HOW.size() - Game.known.size()
+	if unknown > 0:
+		_text(_body, "\n    ...and more you haven't discovered yet.", Color(0.6, 0.58, 0.54))
+
+
+func _can_make(id: String) -> bool:
+	var entry: Dictionary = Game.KNOW_HOW[id]
+	if entry.get("at_fire", false) or (entry.get("carried", false) and Game.backpack.has(entry.name)):
+		return false
+	for item in entry.needs:
+		if Game.inventory.get(item, 0) < entry.needs[item]:
+			return false
+	return true
+
+
+func _know_how_entry(id: String) -> void:
+	var entry: Dictionary = Game.KNOW_HOW[id]
+	var row := HBoxContainer.new()
+	var name := Button.new()
+	name.flat = true
+	name.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name.add_theme_font_size_override("font_size", 18)
+	name.add_theme_color_override("font_color", CREAM)
+	name.pressed.connect(func():
+		_picked = "" if _picked == id else id
+		refresh())
+	row.add_child(name)
+	_body.add_child(row)
+	if entry.get("at_fire", false):
+		name.text = "      " + entry.name + "   (at a campfire)"
+	else:
+		var craftable := _can_make(id)
+		var b := Button.new()
+		b.custom_minimum_size = Vector2(90, 32)
 		if entry.get("carried", false):
 			var made := Game.backpack.has(entry.name)
-			_row(_right, entry.name + ("   (in your backpack)" if made else ""), "Make", craftable and not made, func():
+			name.text = "      " + entry.name + ("   (in your backpack)" if made else "")
+			b.text = "Make"
+			b.pressed.connect(func():
 				player.make(id)
 				close())
 		else:
-			_row(_right, entry.name, "Build", craftable, func():
+			name.text = "      " + entry.name
+			b.text = "Build"
+			b.pressed.connect(func():
 				if player.begin_placing(id):
 					close())
-		_text(_right, "    " + "   ".join(parts), GOLD if craftable else Color(0.7, 0.68, 0.62))
-		_text(_right, "    " + entry.about, Color(0.78, 0.75, 0.68))
-	var unknown := Game.KNOW_HOW.size() - Game.known.size()
-	if unknown > 0 and not Game.known.is_empty():
-		_text(_right, "\n    ...and more you haven't discovered yet.", Color(0.6, 0.58, 0.54))
+		b.disabled = not craftable
+		row.add_child(b)
+		var parts: Array[String] = []
+		for item in entry.needs:
+			parts.append("%s %d/%d" % [item, mini(Game.inventory.get(item, 0), entry.needs[item]), entry.needs[item]])
+		var l := _text(_body, "          " + "   ".join(parts), GOLD if craftable else Color(0.62, 0.6, 0.56))
+		l.add_theme_font_size_override("font_size", 15)
+	if _picked == id:
+		var indent := MarginContainer.new()
+		indent.add_theme_constant_override("margin_left", 40)
+		indent.add_theme_constant_override("margin_right", 12)
+		_body.add_child(indent)
+		var about := Label.new()
+		about.text = entry.about
+		about.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		about.add_theme_font_size_override("font_size", 16)
+		about.add_theme_color_override("font_color", Color(0.78, 0.75, 0.68))
+		indent.add_child(about)
 
 
 func _skill_bar(skill: String, label: String, color: Color) -> void:

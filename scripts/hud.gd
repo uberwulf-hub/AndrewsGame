@@ -217,7 +217,14 @@ func bind(player: Player) -> void:
 			Game.add_item("Stones", 2)
 			Game.add_item("Berries", 4)
 			Game.practice("Foraging", 12.0)
-			Game.learn("campfire")
+			for id in ["campfire", "cooking", "torch_post", "hearth", "bedroll", "dream_catcher", "map", "bone_whistle"]:
+				Game.learn(id)
+			Game.add_item("Feathers", 3)
+			Game.add_item("Small bones", 2)
+			Game.add_item("Vines", 2)
+			Game.add_item("Roast fish", 1)
+			_inventory._open = {"Know-how/Camp": true, "Know-how/Home": true, "Backpack/Food": true, "Backpack/Materials": true}
+			_inventory._picked = "dream_catcher"
 			_inventory._tab = Game.shot_tab
 			_inventory.open())
 	for n in _needs:

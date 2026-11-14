@@ -309,9 +309,9 @@ func _build_options() -> PanelContainer:
 	var full := CheckButton.new()
 	full.text = "Fullscreen"
 	full.add_theme_font_size_override("font_size", 22)
-	full.button_pressed = DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
+	full.button_pressed = Game.is_fullscreen()
 	full.toggled.connect(func(on: bool):
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if on else DisplayServer.WINDOW_MODE_WINDOWED))
+		Game.set_fullscreen(on))
 	box.add_child(full)
 	var back := _wood_button("BACK", 22, Vector2(160, 50))
 	back.pressed.connect(func(): panel.visible = false)
