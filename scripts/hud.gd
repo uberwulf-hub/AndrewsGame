@@ -654,6 +654,7 @@ func set_map_base(base: Image) -> void:
 	var hint := _label("M  put the map away", 18, Color(0.95, 0.88, 0.72), HORIZONTAL_ALIGNMENT_CENTER)
 	box.add_child(hint)
 	_map_sheet.pivot_offset = Vector2(400, 840)
+	_map_sheet.z_index = 20  # above speech bubbles while it's open
 	_map_sheet.visible = false
 
 

@@ -47,6 +47,7 @@ func _ready() -> void:
 	_build_isle()
 	_build_hill()
 	_build_crow_tree()
+	_name_places()
 
 	var player := Player.new()
 	player.name = "Player"
@@ -74,6 +75,7 @@ func _ready() -> void:
 	if Game.story_start:
 		# Where he's been, for the map: nowhere yet in a new life, or as saved.
 		Game.explored = SaveGame.pending.get("explored", PackedByteArray())
+		Game.map_symbols = _map_symbols()
 		hud.set_map_base(_map_image())
 	player.passed_out.connect(_on_passed_out)
 	_birds = Birds.new()
@@ -1469,6 +1471,54 @@ var _explore_timer := 0.0
 ## The land as the map draws it, sketched in charcoal and washes: water,
 ## meadow, forest, rock, with faint height lines. Only the parts he's seen
 ## ever show.
+## The places the map writes in by hand once he's been near them.
+func _name_places() -> void:
+	var places := [["The Sanctum", Vector3.ZERO, "sanctum"]]
+	if Game.story_start:
+		places.append(["The great tree", Game.wake_point, "tree"])
+	if _lake:
+		places.append(["Sunken ruin", _lake.global_position, "ruin"])
+	if _isle:
+		places.append(["Little house on the water", _isle.global_position, "house"])
+	if _hill:
+		places.append(["Lookout hill", _hill.global_position, "hill"])
+	if _gate:
+		places.append(["The stone ring", _gate.global_position, "ring"])
+	if _crow:
+		places.append(["Crows' tree", _crow.global_position, "crow"])
+	Game.map_places = places
+
+
+## Little charcoal symbols for the map, on a loose grid: trees in the forest,
+## ripples on the water, peaks on high ground. [kind, world x/z, size].
+func _map_symbols() -> Array:
+	var out := []
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4242
+	var step := 7.0
+	var half := Game.TERRAIN_SIZE * 0.5
+	var z := -half
+	while z < half:
+		var x := -half
+		while x < half:
+			var p := Vector2(x + rng.randf_range(-2.5, 2.5), z + rng.randf_range(-2.5, 2.5))
+			x += step
+			if p.length() < 18.0 or p.length() > Game.WORLD_RADIUS:
+				continue  # leave the Sanctum clear
+			var h := Game.height_at(p.x, p.y)
+			if h < WATER_LEVEL - 0.8:
+				if rng.randf() < 0.22:
+					out.append(["wave", p, rng.randf_range(0.8, 1.2)])
+			elif h > 13.0:
+				if rng.randf() < 0.5:
+					out.append(["peak", p, clampf((h - 13.0) / 8.0, 0.7, 1.4)])
+			elif h > WATER_LEVEL + 0.6 and Game.story_start and _forest_amount(p.x, p.y) > 0.45:
+				if rng.randf() < 0.7:
+					out.append(["tree", p, rng.randf_range(0.8, 1.15)])
+		z += step
+	return out
+
+
 func _map_image() -> Image:
 	var n := 384
 	var img := Image.create(n, n, false, Image.FORMAT_RGB8)
@@ -3663,6 +3713,20 @@ func _test_map() -> void:
 	print("frozen while open %s" % pl.frozen)
 	await get_tree().create_timer(0.8).timeout
 	shot.call("full")
+	_hud.close_map()
+	# Much more of the world walked, for the places and their names.
+	var wx := -150.0
+	while wx <= 150.0:
+		var wz := -150.0
+		while wz <= 150.0:
+			if Vector2(wx, wz).length() < 150.0:
+				Game.explore_at(Vector3(wx, 0, wz))
+			wz += 10.0
+		wx += 10.0
+	await get_tree().create_timer(0.5).timeout
+	_hud.open_map()
+	await get_tree().create_timer(0.8).timeout
+	shot.call("wide")
 	_hud.close_map()
 	await get_tree().create_timer(0.6).timeout
 	print("frozen after close %s, map quest left %s" % [pl.frozen, not Game.quest("map").is_empty()])

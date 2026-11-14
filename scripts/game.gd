@@ -675,6 +675,10 @@ func open_sparks() -> void:
 const MAP_CELLS := 110
 const SEE_RADIUS := 30.0
 var explored := PackedByteArray()
+## For the map: named places [label, position, icon] and charcoal symbols
+## [kind, world x/z, size], both set up by the World.
+var map_places: Array = []
+var map_symbols: Array = []
 signal explored_changed
 
 
